@@ -1,0 +1,7 @@
+node_modules
+dist
+uploads
+*.db
+.jwt-secret
+.env
+.DS_Store
