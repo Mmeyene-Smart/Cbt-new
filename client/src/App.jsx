@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AuthScreen from "./screens/AuthScreen.jsx";
-import { getUser, setSession, clearSession, api } from "./lib/api.js";
+import { getUser, setSession, clearSession, api, getToken } from "./lib/api.js";
 import { getSocket, destroySocket } from "./lib/socket.js";
 import useCamera from "./hooks/useCamera.js";
-import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Trash2, Eye, Clock, CheckCircle, XCircle, Camera, AlertTriangle } from "lucide-react";
+import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, AlertTriangle } from "lucide-react";
 
 export default function App(){
   const [user,setUser]=useState(getUser());
@@ -237,7 +237,7 @@ function ProctorWall(){
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {entries.map(f=>(
             <div key={f.attemptId} className="glass rounded-2xl overflow-hidden">
-              <img src={f.url} alt={f.username} className="w-full aspect-[4/3] object-cover bg-black/40"/>
+              <img src={`${f.url}${f.url.includes('?')?'&':'?'}token=${encodeURIComponent(getToken()||'')}`} alt={f.username} className="w-full aspect-[4/3] object-cover bg-black/40"/>
               <div className="p-3 flex items-center justify-between">
                 <span className="text-sm font-medium">{f.username}</span>
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/>

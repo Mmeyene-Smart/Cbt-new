@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import authRouter, { requireAuth, requireRole, verifyToken } from "./auth.js";
 import db from "./db.js";
-import { handleProctorSnapshot } from "./proctor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -180,10 +179,19 @@ app.get("/api/proctor/snapshots/:attemptId", requireAuth, (req, res) => {
   const rows = db.prepare("SELECT id, captured_at, file_path FROM proctor_snapshots WHERE attempt_id=? ORDER BY captured_at DESC LIMIT 100").all(attempt.id);
   res.json(rows.map(r=>({ ...r, url: `/uploads/proctor/${attempt.id}/${r.file_path.split(/[\\/]/).pop()}` })));
 });
-app.get("/api/proctor/snapshot/:attemptId/:fname", requireAuth, (req, res) => {
+app.get("/api/proctor/snapshot/:attemptId/:fname", (req, res) => {
+  // allow token via Authorization header OR ?token= query (needed for <img> tags)
+  let user = null;
+  const header = req.headers.authorization || "";
+  let token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token && req.query.token) token = String(req.query.token);
+  if (token) {
+    try { const p = verifyToken(token); user = { id: Number(p.sub), username: p.username, role: p.role }; } catch {}
+  }
+  if (!user) return res.status(401).send("unauthorized");
   const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.attemptId));
   if (!attempt) return res.status(404).send("not found");
-  if (req.user.role!=="admin" && attempt.user_id!==req.user.id) return res.status(403).send("forbidden");
+  if (user.role!=="admin" && attempt.user_id!==user.id) return res.status(403).send("forbidden");
   const file = path.join(__dirname, "..", "uploads", "proctor", String(attempt.id), path.basename(req.params.fname));
   if (!fs.existsSync(file)) return res.status(404).send("not found");
   res.sendFile(file);

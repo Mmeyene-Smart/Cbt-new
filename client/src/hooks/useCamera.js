@@ -18,7 +18,6 @@ export default function useCamera(enabled) {
   const videoRef = setVideoRef;
 
   const start = useCallback(async () => {
-    void enabled;
     if (!navigator.mediaDevices?.getUserMedia) {
       setState("blocked");
       setError("Camera not supported in this browser/context. Use HTTPS or localhost.");
