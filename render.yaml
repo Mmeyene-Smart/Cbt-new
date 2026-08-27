@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: cbt-new
+    runtime: node
+    rootDir: server
+    buildCommand: npm ci
+    startCommand: npm start
+    env: node
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: https://cbt-new-eight.vercel.app
+        sync: false

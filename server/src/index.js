@@ -11,7 +11,12 @@ import { handleProctorSnapshot } from "./proctor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-app.use(cors());
+// CORS: allow Vercel frontend + local dev. Set CORS_ORIGIN in Render dashboard (e.g., https://cbt-new-eight.vercel.app)
+const corsOrigin = process.env.CORS_ORIGIN;
+app.use(cors({
+  origin: corsOrigin ? corsOrigin.split(",").map(s=>s.trim()).filter(Boolean) : true,
+  credentials: true,
+}));
 app.use(express.json({ limit: "10mb" }));
 
 // static for proctor snapshots
@@ -185,7 +190,12 @@ app.get("/api/proctor/snapshot/:attemptId/:fname", requireAuth, (req, res) => {
 });
 
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: true } });
+const io = new Server(httpServer, {
+  cors: {
+    origin: corsOrigin ? corsOrigin.split(",").map(s=>s.trim()).filter(Boolean) : true,
+    credentials: true,
+  },
+});
 
 // auth for sockets
 io.use((socket, next) => {
