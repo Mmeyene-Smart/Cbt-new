@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: cbt-new
+    name: cbt-new-aram
     runtime: node
     rootDir: server
     buildCommand: npm ci
@@ -12,5 +12,8 @@ services:
       - key: NODE_ENV
         value: production
       - key: CORS_ORIGIN
-        value: https://cbt-new-eight.vercel.app
+        value: https://cbt-new-eight.vercel.app,http://localhost:5174
+        sync: false
+      - key: VITE_API_URL
+        value: https://cbt-new-aram.onrender.com
         sync: false
