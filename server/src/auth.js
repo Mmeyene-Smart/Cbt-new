@@ -46,9 +46,13 @@ router.post("/register", async (req, res) => {
   const username = String(req.body?.username ?? "").trim();
   const password = String(req.body?.password ?? "");
   const fullName = String(req.body?.full_name ?? username).trim();
-  const role = req.body?.role === "admin" ? "admin" : "student";
+  // admin registration is disabled — only students can self-register
+  if (req.body?.role === "admin") {
+    return res.status(403).json({ error: "Admin registration is disabled. Contact the administrator." });
+  }
+  const role = "student";
   let subjects = [];
-  if (role === "student" && Array.isArray(req.body?.subjects)) {
+  if (Array.isArray(req.body?.subjects)) {
     subjects = req.body.subjects.map(s=>String(s).trim()).filter(Boolean).slice(0,8);
   }
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(username))

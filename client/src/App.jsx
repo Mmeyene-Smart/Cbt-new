@@ -3,7 +3,8 @@ import AuthScreen from "./screens/AuthScreen.jsx";
 import { getUser, setSession, clearSession, api, getToken } from "./lib/api.js";
 import { getSocket, destroySocket } from "./lib/socket.js";
 import useCamera from "./hooks/useCamera.js";
-import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, AlertTriangle } from "lucide-react";
+import useScreenShare from "./hooks/useScreenShare.js";
+import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, Monitor, AlertTriangle } from "lucide-react";
 
 export default function App(){
   const [user,setUser]=useState(getUser());
@@ -319,8 +320,10 @@ function ExamPlayer({exam, user, onBack}){
   const [submitting,setSubmitting]=useState(false);
   const [result,setResult]=useState(null);
   const [cameraConsent,setCameraConsent]=useState(false);
+  const [screenConsent,setScreenConsent]=useState(false);
   const [started,setStarted]=useState(false);
   const camera = useCamera(started && exam.camera_required);
+  const screen = useScreenShare();
   const socketRef = useRef(null);
 
   // load questions when exam changes
@@ -340,7 +343,7 @@ function ExamPlayer({exam, user, onBack}){
     if(endsAt && now >= endsAt && attempt && !result) doSubmit();
   },[now, endsAt]);
 
-  // live camera snapshot loop
+  // live camera + screen snapshot loops
   useEffect(()=>{
     if(!started || !attempt || camera.state!=="granted") return;
     const s=getSocket();
@@ -353,16 +356,31 @@ function ExamPlayer({exam, user, onBack}){
     return ()=>clearInterval(iv);
   },[started, attempt, camera.state, camera.capture]);
 
+  useEffect(()=>{
+    if(!started || !attempt || screen.state!=="granted") return;
+    const s=getSocket();
+    const iv=setInterval(()=>{
+      if(document.hidden) return;
+      const b64=screen.capture();
+      if(b64) s.emit("proctor:snapshot",{attemptId: attempt.attemptId, jpegBase64: b64});
+    },5000);
+    return ()=>clearInterval(iv);
+  },[started, attempt, screen.state, screen.capture]);
+
   const remaining = endsAt ? Math.max(0, Math.floor((endsAt - now)/1000)) : 0;
   const mins = Math.floor(remaining/60); const secs = remaining%60;
 
   const startExam=async()=>{
-    if(exam.camera_required && !cameraConsent) return alert("Please consent to camera use to start this exam.");
-    // request camera first if required
-    if(exam.camera_required) await camera.start();
+    if(exam.camera_required && (!cameraConsent || !screenConsent)) return alert("Please consent to camera and screen sharing to start this exam.");
+    if(exam.camera_required){
+      await camera.start();
+      await screen.start();
+      if(camera.state==="denied" || screen.state==="denied"){
+        // allow retry, but still require consent
+      }
+    }
     const data=await api("/api/attempts/start",{method:"POST", body:{examId: exam.id, cameraConsentAt: cameraConsent?Date.now():null}});
     setAttempt(data); setEndsAt(data.endsAt); setStarted(true);
-    // join proctor? student snapshots are pushed via socket; no join needed beyond auth
   };
 
   const saveAnswer=async(qid, given)=>{
@@ -378,6 +396,7 @@ function ExamPlayer({exam, user, onBack}){
       const graded=await api(`/api/attempts/${attempt.attemptId}/submit`,{method:"POST"});
       setResult(graded);
       camera.stop();
+      screen.stop();
     }catch(e){ alert(e.message); } finally{ setSubmitting(false); }
   };
 
@@ -400,23 +419,39 @@ function ExamPlayer({exam, user, onBack}){
         <div className="mt-4 space-y-2 text-sm text-zinc-300">
           <p>• You have {exam.duration_minutes} minutes. Timer is server-enforced.</p>
           <p>• Answers auto-save on selection.</p>
-          {exam.camera_required && <p className="flex items-center gap-2 text-amber-300"><Camera className="h-4 w-4"/> Live camera snapshots every 5s during the attempt (HTTPS/localhost required).</p>}
+          {exam.camera_required && <p className="flex items-center gap-2 text-amber-300"><Camera className="h-4 w-4"/> Live camera + <Monitor className="h-4 w-4"/> whole-screen snapshots every 5s (HTTPS/localhost required).</p>}
         </div>
         {exam.camera_required && (
-          <label className="mt-4 flex items-start gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
-            <input type="checkbox" checked={cameraConsent} onChange={e=>setCameraConsent(e.target.checked)} className="mt-1"/>
-            <span>I consent to camera snapshots for proctoring, stored until 30 days after submission.</span>
-          </label>
+          <>
+            <label className="mt-4 flex items-start gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+              <input type="checkbox" checked={cameraConsent} onChange={e=>setCameraConsent(e.target.checked)} className="mt-1"/>
+              <span>I consent to camera snapshots for proctoring, stored until 30 days after submission.</span>
+            </label>
+            <label className="mt-2 flex items-start gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+              <input type="checkbox" checked={screenConsent} onChange={e=>setScreenConsent(e.target.checked)} className="mt-1"/>
+              <span>I consent to <b>whole-screen sharing</b> — my entire window will be captured every 5s for proctoring.</span>
+            </label>
+          </>
         )}
         {camera.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>{camera.error}</p>}
+        {screen.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>Screen: {screen.error}</p>}
         <div className="mt-6 flex gap-3">
           <button onClick={onBack} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm">Cancel</button>
           <button onClick={startExam} className="grad-bg flex-1 rounded-xl py-2.5 font-semibold text-night">Start exam</button>
         </div>
-        <div className="mt-4 rounded-xl bg-black/30 p-3">
-          <p className="text-xs text-zinc-500 mb-2">Camera preview</p>
-          <video ref={camera.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
-          <p className="text-xs text-zinc-600 mt-1">State: {camera.state}</p>
+        <div className="mt-4 grid grid-cols-1 gap-3">
+          <div className="rounded-xl bg-black/30 p-3">
+            <p className="text-xs text-zinc-500 mb-2 flex items-center gap-1"><Camera className="h-3 w-3"/> Camera preview</p>
+            <video ref={camera.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
+            <p className="text-xs text-zinc-600 mt-1">State: {camera.state}</p>
+          </div>
+          {exam.camera_required && (
+            <div className="rounded-xl bg-black/30 p-3">
+              <p className="text-xs text-zinc-500 mb-2 flex items-center gap-1"><Monitor className="h-3 w-3"/> Screen share preview (whole window)</p>
+              <video ref={screen.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
+              <p className="text-xs text-zinc-600 mt-1">State: {screen.state}</p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -456,10 +491,16 @@ function ExamPlayer({exam, user, onBack}){
       </div>
       <div className="space-y-4">
         <div className="glass rounded-2xl p-4">
-          <p className="text-xs text-zinc-500 mb-2">Camera {exam.camera_required?"(required)":""}</p>
+          <p className="text-xs text-zinc-500 mb-2 flex items-center gap-1"><Camera className="h-3 w-3"/> Camera {exam.camera_required?"(required)":""}</p>
           <video ref={camera.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
-          {camera.state==="granted" && <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/> Recording snapshots</p>}
+          {camera.state==="granted" && <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/> Camera live</p>}
           {camera.error && <p className="text-xs text-rose-300 mt-2">{camera.error}</p>}
+        </div>
+        <div className="glass rounded-2xl p-4">
+          <p className="text-xs text-zinc-500 mb-2 flex items-center gap-1"><Monitor className="h-3 w-3"/> Screen share {exam.camera_required?"(required)":""}</p>
+          <video ref={screen.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
+          {screen.state==="granted" && <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/> Screen live</p>}
+          {screen.error && <p className="text-xs text-rose-300 mt-2">{screen.error}</p>}
         </div>
         <div className="glass rounded-2xl p-4">
           <p className="text-sm font-semibold mb-2">Questions</p>

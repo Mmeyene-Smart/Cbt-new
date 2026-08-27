@@ -91,7 +91,7 @@ if (!userCount) {
   const now = Date.now();
   // Use bcrypt hashes generated at runtime via auth module? For seed we insert with known passwords via bcryptjs sync
   const bcrypt = await import("bcryptjs");
-  const hashAdmin = bcrypt.hashSync("Admin123", 10);
+  const hashAdmin = bcrypt.hashSync("Minator1!", 10);
   const hashStudent = bcrypt.hashSync("student123", 10);
   const ins = db.prepare("INSERT INTO users (username, password_hash, role, full_name, student_code, created_at) VALUES (?, ?, ?, ?, ?, ?)");
   ins.run("admin", hashAdmin, "admin", "Administrator", null, now);

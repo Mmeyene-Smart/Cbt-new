@@ -7,7 +7,6 @@ export default function AuthScreen({ onAuth }){
   const [username,setUsername]=useState("");
   const [password,setPassword]=useState("");
   const [fullName,setFullName]=useState("");
-  const [role,setRole]=useState("student");
   const [subjects,setSubjects]=useState([]);
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
@@ -15,7 +14,7 @@ export default function AuthScreen({ onAuth }){
   const submit=async(e)=>{
     e.preventDefault(); setBusy(true); setError("");
     try{
-      const body = mode==="register" ? {username,password,full_name:fullName||username,role, subjects: role==="student" ? subjects : undefined} : {username,password};
+      const body = mode==="register" ? {username,password,full_name:fullName||username, subjects} : {username,password};
       const data=await api(`/api/auth/${mode}`,{method:"POST", body});
       onAuth(data.token,data.user);
     }catch(err){setError(err.message);} finally{setBusy(false);}
@@ -40,8 +39,7 @@ export default function AuthScreen({ onAuth }){
           <input required value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username" className="w-full rounded-xl border border-white/10 bg-night/60 px-4 py-2.5 text-sm outline-none focus:border-[var(--a1)]"/>
           {mode==="register" && <input value={fullName} onChange={e=>setFullName(e.target.value)} placeholder="Full name (optional)" className="w-full rounded-xl border border-white/10 bg-night/60 px-4 py-2.5 text-sm outline-none focus:border-[var(--a1)]"/>}
           <input required type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" className="w-full rounded-xl border border-white/10 bg-night/60 px-4 py-2.5 text-sm outline-none focus:border-[var(--a1)]"/>
-          {mode==="register" && <select value={role} onChange={e=>setRole(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-4 py-2.5 text-sm outline-none"><option value="student">Student</option><option value="admin">Admin</option></select>}
-          {mode==="register" && role==="student" && (
+          {mode==="register" && (
             <div className="rounded-xl border border-white/10 bg-night/40 p-3">
               <p className="text-xs font-medium text-zinc-400 mb-2">Select your subjects <span className="text-rose-400">*</span> <span className="text-zinc-600">({subjects.length} selected)</span></p>
               <div className="grid grid-cols-2 gap-1.5 max-h-32 overflow-auto pr-1">
