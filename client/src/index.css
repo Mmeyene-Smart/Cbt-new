@@ -2,18 +2,36 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+}
+:root {
+  --bg: #ffffff;
+  --panel: #f8f9fb;
+  --panel-strong: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --color-night: #ffffff;
+  --color-panel: #f8f9fb;
+}
+:root[data-theme="dark"] {
+  --bg: #08080f;
+  --panel: #0c0c16;
+  --panel-strong: #0c0c16;
+  --text: #e4e4ef;
+  --muted: #9ca3af;
+  --border: rgba(255,255,255,0.08);
   --color-night: #08080f;
   --color-panel: #0c0c16;
 }
 :root[data-accent="violet"] { --a1:#8b5cf6; --a2:#22d3ee; }
 @layer base {
-  body { background-color: var(--color-night); color:#e4e4ef; font-family: var(--font-sans); overflow-x:hidden; }
+  body { background-color: var(--bg); color: var(--text); font-family: var(--font-sans); overflow-x:hidden; }
   ::selection { background-color: rgb(139 92 246 / 0.35); }
   ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background: linear-gradient(var(--a1),var(--a2)); border-radius:8px; }
 }
 @layer utilities {
-  .glass { background-color: rgb(255 255 255 / 0.04); border:1px solid rgb(255 255 255 / 0.08); backdrop-filter: blur(14px); }
+  .glass { background-color: color-mix(in srgb, var(--panel) 92%, transparent); border:1px solid var(--border); backdrop-filter: blur(14px); }
   .text-gradient { background-image: linear-gradient(92deg,var(--a1),var(--a2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
   .grad-bg { background-image: linear-gradient(92deg,var(--a1),var(--a2)); }
-  .bg-grid { background-image: linear-gradient(rgb(255 255 255 / 0.03) 1px, transparent 1px), linear-gradient(90deg, rgb(255 255 255 / 0.03) 1px, transparent 1px); background-size:48px 48px; }
+  .bg-grid { background-image: linear-gradient(color-mix(in srgb, var(--text) 4%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--text) 4%, transparent) 1px, transparent 1px); background-size:48px 48px; }
 }

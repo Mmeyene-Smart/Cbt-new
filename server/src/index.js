@@ -7,16 +7,30 @@ import { fileURLToPath } from "node:url";
 import { Server } from "socket.io";
 import authRouter, { requireAuth, requireRole, verifyToken } from "./auth.js";
 import db from "./db.js";
+import multer from "multer";
+import ExcelJS from "exceljs";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-// CORS: allow Vercel frontend + local dev. Set CORS_ORIGIN in Render dashboard (e.g., https://cbt-new-eight.vercel.app)
 const corsOrigin = process.env.CORS_ORIGIN;
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }, // allow <img> from proctor snapshots
+  contentSecurityPolicy: false, // keep simple for Vite dev; tighten in production if needed
+}));
 app.use(cors({
   origin: corsOrigin ? corsOrigin.split(",").map(s=>s.trim()).filter(Boolean) : true,
   credentials: true,
 }));
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "1mb" })); // 1mb for JSON; proctor snapshots use base64 but are separate (still via JSON, 500KB limit enforced in handler)
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
+
+// rate limiting — generous but stops brute force
+const generalLimiter = rateLimit({ windowMs: 60*1000, max: 120, standardHeaders: true, legacyHeaders: false });
+const authLimiter = rateLimit({ windowMs: 15*60*1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: "Too many attempts, try again in 15 minutes." } });
+app.use("/api/", generalLimiter);
+app.use("/api/auth/", authLimiter);
 
 // static for proctor snapshots
 const UPLOADS = path.join(__dirname, "..", "uploads");
@@ -34,6 +48,27 @@ app.get("/api/students", requireAuth, requireRole("admin"), (_req, res) => {
     return { ...r, subjects };
   });
   res.json(parsed);
+});
+
+app.get("/api/exams/template.xlsx", requireAuth, requireRole("admin"), async (_req, res) => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Questions");
+  ws.columns = [
+    { header: "Type (mcq/multi/tf)", key: "type", width: 18 },
+    { header: "Prompt", key: "prompt", width: 50 },
+    { header: "Options (comma-separated)", key: "options", width: 40 },
+    { header: "Answer(s) (comma-separated, must match Options)", key: "answer", width: 40 },
+    { header: "Marks", key: "marks", width: 10 },
+  ];
+  ws.addRow({ type: "mcq", prompt: "What is the capital of Nigeria?", options: "Lagos,Abuja,Kano", answer: "Abuja", marks: 1 });
+  ws.addRow({ type: "multi", prompt: "Select all valid CSS units", options: "px,em,kg,rem", answer: "px,em,rem", marks: 1 });
+  ws.addRow({ type: "tf", prompt: "Node.js can run outside the browser.", options: "True,False", answer: "True", marks: 1 });
+  ws.getRow(1).font = { bold: true };
+  ws.getRow(1).commitRow();
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", "attachment; filename=questions_template.xlsx");
+  await wb.xlsx.write(res);
+  res.end();
 });
 
 app.get("/api/exams", requireAuth, (_req, res) => {
@@ -79,6 +114,52 @@ app.post("/api/exams/:id/questions", requireAuth, requireRole("admin"), (req, re
   const order = db.prepare("SELECT COUNT(*) as n FROM questions WHERE exam_id=?").get(examId).n;
   const info = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)").run(examId, type, prompt, JSON.stringify(options), JSON.stringify(answer), Number(marks)||1, order);
   res.json(db.prepare("SELECT * FROM questions WHERE id=?").get(Number(info.lastInsertRowid)));
+});
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+// Bulk import questions via Excel
+app.post("/api/exams/:id/questions/import", requireAuth, requireRole("admin"), upload.single("file"), async (req, res) => {
+  const examId = Number(req.params.id);
+  const exam = db.prepare("SELECT id FROM exams WHERE id=?").get(examId);
+  if (!exam) return res.status(404).json({ error: "Exam not found" });
+  if (!req.file) return res.status(400).json({ error: "No file uploaded. Use field name 'file'." });
+  try {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(req.file.buffer);
+    const ws = wb.worksheets[0];
+    if (!ws) return res.status(400).json({ error: "No worksheet found" });
+    let imported = 0;
+    const errors = [];
+    const baseOrder = db.prepare("SELECT COUNT(*) as n FROM questions WHERE exam_id=?").get(examId).n;
+    let order = baseOrder;
+    // assume first row is header
+    for (let i = 2; i <= ws.rowCount; i++) {
+      const row = ws.getRow(i);
+      if (row.cellCount === 0) continue;
+      const type = String(row.getCell(1).value || "").trim().toLowerCase();
+      const prompt = String(row.getCell(2).value || "").trim();
+      const optionsRaw = String(row.getCell(3).value || "").trim();
+      const answerRaw = String(row.getCell(4).value || "").trim();
+      const marksRaw = String(row.getCell(5).value || "1").trim();
+      if (!prompt && !optionsRaw && !answerRaw) continue; // skip empty
+      if (!["mcq","multi","tf"].includes(type)) { errors.push({ row: i, reason: `Invalid type '${type}'` }); continue; }
+      if (!prompt) { errors.push({ row: i, reason: "Missing prompt" }); continue; }
+      const options = optionsRaw.split(",").map(s=>s.trim()).filter(Boolean);
+      const answer = answerRaw.split(",").map(s=>s.trim()).filter(Boolean);
+      if (!options.length) { errors.push({ row: i, reason: "No options" }); continue; }
+      if (!answer.length) { errors.push({ row: i, reason: "No answer" }); continue; }
+      const missing = answer.filter(a=>!options.includes(a));
+      if (missing.length) { errors.push({ row: i, reason: `Answer not in options: ${missing.join(",")}` }); continue; }
+      const marks = Math.max(1, Number(marksRaw) || 1);
+      db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)").run(examId, type, prompt, JSON.stringify(options), JSON.stringify(answer), marks, order++);
+      imported++;
+    }
+    res.json({ imported, errors, totalRows: ws.rowCount - 1 });
+  } catch (e) {
+    console.error("Excel import failed", e);
+    res.status(500).json({ error: "Failed to parse Excel: " + e.message });
+  }
 });
 
 // ---- attempts ----

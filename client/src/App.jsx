@@ -4,7 +4,7 @@ import { getUser, setSession, clearSession, api, getToken } from "./lib/api.js";
 import { getSocket, destroySocket } from "./lib/socket.js";
 import useCamera from "./hooks/useCamera.js";
 import useScreenShare from "./hooks/useScreenShare.js";
-import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, Monitor, AlertTriangle } from "lucide-react";
+import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, Monitor, AlertTriangle, Sun, Moon } from "lucide-react";
 
 export default function App(){
   const [user,setUser]=useState(getUser());
@@ -16,6 +16,11 @@ function doLogout(setUser){ return ()=>{ destroySocket(); clearSession(); setUse
 // ===== Admin =====
 function AdminShell({user,onLogout}){
   const [tab,setTab]=useState("dashboard");
+  const [theme,setTheme]=useState(()=> localStorage.getItem("cbt.theme") || "light");
+  useEffect(()=>{
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("cbt.theme", theme);
+  },[theme]);
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-white/5 bg-panel/70 backdrop-blur px-6">
@@ -27,6 +32,9 @@ function AdminShell({user,onLogout}){
             ))}
           </nav>
           <span className="text-sm text-zinc-400">{user.username}</span>
+          <button onClick={()=>setTheme(theme==="light"?"dark":"light")} aria-label="Toggle theme" title={`Switch to ${theme==="light"?"dark":"light"} mode`} className="p-2 rounded-lg hover:bg-white/10">
+            {theme==="light" ? <Moon className="h-4 w-4"/> : <Sun className="h-4 w-4"/>}
+          </button>
           <button onClick={onLogout} className="p-2 rounded-lg hover:bg-white/10"><LogOut className="h-4 w-4"/></button>
         </div>
       </header>
@@ -141,6 +149,42 @@ function ExamsAdmin(){
               {!qs.length && <p className="text-xs text-zinc-600">No questions yet.</p>}
             </ul>
             <div className="space-y-2 border-t border-white/5 pt-3">
+              <div className="flex gap-2">
+                <button onClick={async()=>{
+                  try{
+                    const token = localStorage.getItem("cbt.token");
+                    const res = await fetch(`/api/exams/template.xlsx`, { headers: { Authorization: `Bearer ${token}` }});
+                    if(!res.ok) throw new Error("Failed to download template");
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url; a.download = "questions_template.xlsx"; a.click();
+                    URL.revokeObjectURL(url);
+                  }catch(e){ alert(e.message); }
+                }} className="flex-1 rounded-xl border border-white/10 bg-white/5 py-2 text-xs hover:bg-white/10">Download Excel Template</button>
+                <label className="flex-1 cursor-pointer rounded-xl border border-white/10 bg-white/5 py-2 text-xs text-center hover:bg-white/10">
+                  Upload Excel
+                  <input type="file" accept=".xlsx,.xls" className="hidden" onChange={async(e)=>{
+                    const file = e.target.files[0];
+                    if(!file) return;
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    try{
+                      const res = await fetch(`/api/exams/${selected.id}/questions/import`, {
+                        method: "POST",
+                        headers: { Authorization: `Bearer ${localStorage.getItem("cbt.token")}` },
+                        body: fd
+                      });
+                      const data = await res.json();
+                      if(!res.ok) throw new Error(data.error || "Import failed");
+                      alert(`Imported ${data.imported} questions` + (data.errors?.length ? `\n${data.errors.length} rows had errors:\n` + data.errors.map(er=>`Row ${er.row}: ${er.reason}`).join("\n") : ""));
+                      const refreshed = await api(`/api/exams/${selected.id}`);
+                      setQs(refreshed.questions);
+                    }catch(err){ alert(err.message); }
+                    e.target.value = "";
+                  }}/>
+                </label>
+              </div>
               <select value={qType} onChange={e=>setQType(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm">
                 <option value="mcq">MCQ (single)</option><option value="multi">Multi-select</option><option value="tf">True/False</option>
               </select>
