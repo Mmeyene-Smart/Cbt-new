@@ -23,11 +23,12 @@
   --color-night: #08080f;
   --color-panel: #0c0c16;
 }
-:root[data-accent="violet"] { --a1:#8b5cf6; --a2:#22d3ee; }
+:root[data-accent="violet"] { --a1:#16a34a; --a2:#15803d; }
+:root[data-accent="green"] { --a1:#16a34a; --a2:#15803d; }
 @layer base {
   body { background-color: var(--bg); color: var(--text); font-family: var(--font-sans); overflow-x:hidden; }
-  ::selection { background-color: rgb(139 92 246 / 0.35); }
-  ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background: linear-gradient(var(--a1),var(--a2)); border-radius:8px; }
+  ::selection { background-color: rgb(22 163 74 / 0.25); }
+  ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background: var(--a1); border-radius:8px; }
 }
 @layer utilities {
   .glass { background-color: color-mix(in srgb, var(--panel) 92%, transparent); border:1px solid var(--border); backdrop-filter: blur(14px); }
