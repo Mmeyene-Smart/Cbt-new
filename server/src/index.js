@@ -39,6 +39,13 @@ app.use("/uploads", express.static(UPLOADS));
 app.use("/api/auth", authRouter);
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 
+// Public: list distinct exam subjects for registration (reflects actual exams)
+app.get("/api/subjects", (_req, res) => {
+  const rows = db.prepare("SELECT DISTINCT subject FROM exams WHERE subject IS NOT NULL AND TRIM(subject) != '' ORDER BY subject").all();
+  const subjects = rows.map(r=>r.subject).filter(Boolean);
+  res.json(subjects);
+});
+
 // ---- users / students ----
 app.get("/api/students", requireAuth, requireRole("admin"), (_req, res) => {
   const rows = db.prepare("SELECT id, username, full_name, student_code, subjects, role, created_at FROM users WHERE role='student' ORDER BY id DESC").all();
