@@ -86,21 +86,29 @@ try {
   }
 } catch {}
 
-// seed admin + demo students + demo exams if empty (dev only)
-const userCount = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
-if (!userCount && process.env.NODE_ENV !== "production") {
-  const now = Date.now();
+// ensure admin exists (always) and seed demo data if empty
+const adminExists = db.prepare("SELECT id FROM users WHERE username = ? AND role = 'admin'").get("admin");
+if (!adminExists) {
   const bcrypt = await import("bcryptjs");
   const adminPass = process.env.ADMIN_PASSWORD || "Minator1!";
   const hashAdmin = bcrypt.hashSync(adminPass, 12);
+  db.prepare("INSERT INTO users (username, password_hash, role, full_name, student_code, subjects, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run("admin", hashAdmin, "admin", "Administrator", null, JSON.stringify([]), Date.now());
+  console.log("[db] seeded admin user");
+  if (!process.env.ADMIN_PASSWORD) console.warn("[db] Using default admin password Minator1!. Set ADMIN_PASSWORD env in production!");
+}
+// seed demo students only in non-production when DB is empty
+const userCount = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
+if (userCount === 1 && process.env.NODE_ENV !== "production") {
+  // only admin exists and we're in dev — add demo students
+  const bcrypt = await import("bcryptjs");
   const hashStudent = bcrypt.hashSync("student123", 12);
   const ins = db.prepare("INSERT INTO users (username, password_hash, role, full_name, student_code, subjects, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
-  ins.run("admin", hashAdmin, "admin", "Administrator", null, JSON.stringify([]), now);
-  ins.run("mmeyene", hashStudent, "student", "Mmeyene Aloysius", "STU001", JSON.stringify(["General"]), now);
-  ins.run("demo_student", hashStudent, "student", "Demo Student", "STU002", JSON.stringify(["General"]), now);
-  ins.run("john_doe", hashStudent, "student", "John Doe", "STU003", JSON.stringify(["Computer Science"]), now);
-  console.log("[db] seeded dev users (admin / demo students)");
-  if (!process.env.ADMIN_PASSWORD) console.warn("[db] Using default admin password. Set ADMIN_PASSWORD env in production!");
+  const now = Date.now();
+  try { ins.run("mmeyene", hashStudent, "student", "Mmeyene Aloysius", "STU001", JSON.stringify(["General"]), now); } catch {}
+  try { ins.run("demo_student", hashStudent, "student", "Demo Student", "STU002", JSON.stringify(["General"]), now); } catch {}
+  try { ins.run("john_doe", hashStudent, "student", "John Doe", "STU003", JSON.stringify(["Computer Science"]), now); } catch {}
+  console.log("[db] seeded demo students");
 }
 
 const examCount = db.prepare("SELECT COUNT(*) AS n FROM exams").get().n;
