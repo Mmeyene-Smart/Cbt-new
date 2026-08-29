@@ -11,13 +11,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const secretFile = path.join(__dirname, "..", ".jwt-secret");
 let SECRET = process.env.JWT_SECRET;
 if (!SECRET) {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("JWT_SECRET environment variable is required in production");
-  }
   if (fs.existsSync(secretFile)) SECRET = fs.readFileSync(secretFile, "utf8").trim();
   else {
     SECRET = crypto.randomBytes(48).toString("hex");
     fs.writeFileSync(secretFile, SECRET, { mode: 0o600 });
+  }
+  if (process.env.NODE_ENV === "production") {
+    console.warn("[auth] JWT_SECRET not set — using ephemeral secret. Set JWT_SECRET in Render to keep logins stable across deploys!");
   }
 }
 

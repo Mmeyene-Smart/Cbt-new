@@ -16,6 +16,14 @@ export async function api(path,{method="GET",body}={}){
   const url = apiUrl(path);
   const res=await fetch(url,{method, headers, body: body instanceof FormData ? body : body?JSON.stringify(body):undefined});
   const data=await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(data.error||`Request failed ${res.status}`);
+  if(!res.ok){
+    // Auto-logout on 401 so the user sees the login screen instead of a broken dashboard
+    if(res.status===401 && getToken()){
+      clearSession();
+      // reload to show AuthScreen; use location to avoid React state issues
+      if(!path.includes("/api/auth/")) window.location.reload();
+    }
+    throw new Error(data.error||`Request failed ${res.status}`);
+  }
   return data;
 }
