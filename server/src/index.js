@@ -11,30 +11,52 @@ import multer from "multer";
 import ExcelJS from "exceljs";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import cookieParser from "cookie-parser";
+import sanitizeHtml from "sanitize-html";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const corsOrigin = process.env.CORS_ORIGIN;
+const allowedOrigins = corsOrigin ? corsOrigin.split(",").map(s=>s.trim()).filter(Boolean) : [];
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }, // allow <img> from proctor snapshots
-  contentSecurityPolicy: false, // keep simple for Vite dev; tighten in production if needed
+  crossOriginResourcePolicy: { policy: "same-site" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+    },
+  },
 }));
 app.use(cors({
-  origin: corsOrigin ? corsOrigin.split(",").map(s=>s.trim()).filter(Boolean) : true,
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (!allowedOrigins.length) {
+      if (process.env.NODE_ENV !== "production") return callback(null, true);
+      return callback(new Error("CORS not configured"), false);
+    }
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"), false);
+  },
   credentials: true,
 }));
+app.use(cookieParser());
 app.use(express.json({ limit: "1mb" })); // 1mb for JSON; proctor snapshots use base64 but are separate (still via JSON, 500KB limit enforced in handler)
 app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 
 // rate limiting — generous but stops brute force
 const generalLimiter = rateLimit({ windowMs: 60*1000, max: 120, standardHeaders: true, legacyHeaders: false });
 const authLimiter = rateLimit({ windowMs: 15*60*1000, max: 20, standardHeaders: true, legacyHeaders: false, message: { error: "Too many attempts, try again in 15 minutes." } });
+const proctorLimiter = rateLimit({ windowMs: 60*1000, max: 30, standardHeaders: true, legacyHeaders: false, message: { error: "Too many snapshot requests" } });
 app.use("/api/", generalLimiter);
 app.use("/api/auth/", authLimiter);
+app.use("/api/proctor/", proctorLimiter);
 
-// static for proctor snapshots
-const UPLOADS = path.join(__dirname, "..", "uploads");
-app.use("/uploads", express.static(UPLOADS));
+// sanitize helper for XSS prevention
+const sanitize = (str) => sanitizeHtml(String(str || ""), { allowedTags: [], allowedAttributes: {} }).trim();
 
 app.use("/api/auth", authRouter);
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
@@ -85,12 +107,13 @@ app.get("/api/exams", requireAuth, (_req, res) => {
 });
 
 app.post("/api/exams", requireAuth, requireRole("admin"), (req, res) => {
-  const title = String(req.body?.title ?? "").trim();
-  const subject = String(req.body?.subject ?? "").trim() || "General";
+  const title = sanitize(req.body?.title);
+  const subject = sanitize(req.body?.subject) || "General";
   const duration = Math.max(5, Math.min(180, Number(req.body?.duration_minutes) || 30));
   const passPercent = Math.max(0, Math.min(100, Number(req.body?.pass_percent) || 50));
   const cameraRequired = req.body?.camera_required === false ? 0 : 1;
-  if (!title) return res.status(400).json({ error: "Title required" });
+  if (!title || title.length < 3 || title.length > 120) return res.status(400).json({ error: "Title must be 3-120 characters" });
+  if (/[<>]/.test(title) || /[<>]/.test(subject)) return res.status(400).json({ error: "Invalid characters in title/subject" });
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
   const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, Date.now());
   const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(info.lastInsertRowid));
@@ -115,15 +138,28 @@ app.post("/api/exams/:id/questions", requireAuth, requireRole("admin"), (req, re
   const examId = Number(req.params.id);
   const exam = db.prepare("SELECT id FROM exams WHERE id=?").get(examId);
   if (!exam) return res.status(404).json({ error: "Exam not found" });
-  const { type, prompt, options, answer, marks } = req.body ?? {};
-  if (!prompt || !Array.isArray(options) || !Array.isArray(answer)) return res.status(400).json({ error: "prompt, options[], answer[] required" });
+  let { type, prompt, options, answer, marks } = req.body ?? {};
+  prompt = sanitize(prompt);
+  if (!prompt || prompt.length > 1000) return res.status(400).json({ error: "Prompt required (1-1000 chars)" });
+  if (!Array.isArray(options) || !Array.isArray(answer)) return res.status(400).json({ error: "prompt, options[], answer[] required" });
+  options = options.map(o => sanitize(o)).filter(Boolean).slice(0, 6);
+  answer = answer.map(a => sanitize(a)).filter(Boolean);
+  if (options.length < 2 || options.some(o => o.length > 200)) return res.status(400).json({ error: "Options must be 2-6 items, each 1-200 chars" });
+  if (!answer.length) return res.status(400).json({ error: "Answer required" });
   if (!["mcq","multi","tf"].includes(type)) return res.status(400).json({ error: "Invalid type" });
   const order = db.prepare("SELECT COUNT(*) as n FROM questions WHERE exam_id=?").get(examId).n;
   const info = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)").run(examId, type, prompt, JSON.stringify(options), JSON.stringify(answer), Number(marks)||1, order);
   res.json(db.prepare("SELECT * FROM questions WHERE id=?").get(Number(info.lastInsertRowid)));
 });
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") cb(null, true);
+    else cb(new Error("Only .xlsx files allowed"));
+  },
+});
 
 // Bulk import questions via Excel
 app.post("/api/exams/:id/questions/import", requireAuth, requireRole("admin"), upload.single("file"), async (req, res) => {
@@ -136,6 +172,7 @@ app.post("/api/exams/:id/questions/import", requireAuth, requireRole("admin"), u
     await wb.xlsx.load(req.file.buffer);
     const ws = wb.worksheets[0];
     if (!ws) return res.status(400).json({ error: "No worksheet found" });
+    if (ws.rowCount > 1001) return res.status(400).json({ error: "Too many rows (max 1000 + header)" });
     let imported = 0;
     const errors = [];
     const baseOrder = db.prepare("SELECT COUNT(*) as n FROM questions WHERE exam_id=?").get(examId).n;
@@ -144,11 +181,12 @@ app.post("/api/exams/:id/questions/import", requireAuth, requireRole("admin"), u
     for (let i = 2; i <= ws.rowCount; i++) {
       const row = ws.getRow(i);
       if (row.cellCount === 0) continue;
-      const type = String(row.getCell(1).value || "").trim().toLowerCase();
-      const prompt = String(row.getCell(2).value || "").trim();
-      const optionsRaw = String(row.getCell(3).value || "").trim();
-      const answerRaw = String(row.getCell(4).value || "").trim();
-      const marksRaw = String(row.getCell(5).value || "1").trim();
+      const sanitizeCell = (v) => String(v || "").trim().replace(/^[=+\-@]/, "'$&");
+      const type = sanitizeCell(row.getCell(1).value).toLowerCase();
+      const prompt = sanitizeCell(row.getCell(2).value);
+      const optionsRaw = sanitizeCell(row.getCell(3).value);
+      const answerRaw = sanitizeCell(row.getCell(4).value);
+      const marksRaw = sanitizeCell(row.getCell(5).value) || "1";
       if (!prompt && !optionsRaw && !answerRaw) continue; // skip empty
       if (!["mcq","multi","tf"].includes(type)) { errors.push({ row: i, reason: `Invalid type '${type}'` }); continue; }
       if (!prompt) { errors.push({ row: i, reason: "Missing prompt" }); continue; }
@@ -165,7 +203,7 @@ app.post("/api/exams/:id/questions/import", requireAuth, requireRole("admin"), u
     res.json({ imported, errors, totalRows: ws.rowCount - 1 });
   } catch (e) {
     console.error("Excel import failed", e);
-    res.status(500).json({ error: "Failed to parse Excel: " + e.message });
+    res.status(500).json({ error: "Failed to parse Excel file" });
   }
 });
 
@@ -191,10 +229,17 @@ app.post("/api/attempts/:id/answer", requireAuth, (req, res) => {
   if (!attempt || attempt.user_id !== req.user.id) return res.status(404).json({ error: "Attempt not found" });
   if (attempt.status !== "in_progress") return res.status(400).json({ error: "Attempt not active" });
   if (Date.now() > attempt.ends_at) return res.status(400).json({ error: "Time expired" });
-  const { questionId, given } = req.body ?? {};
+  let { questionId, given } = req.body ?? {};
   const q = db.prepare("SELECT * FROM questions WHERE id=? AND exam_id=?").get(Number(questionId), attempt.exam_id);
   if (!q) return res.status(404).json({ error: "Question not found" });
-  db.prepare("INSERT INTO attempt_answers (attempt_id, question_id, given, is_correct, marks_awarded) VALUES (?, ?, ?, NULL, 0) ON CONFLICT(attempt_id, question_id) DO UPDATE SET given=excluded.given").run(attempt.id, q.id, JSON.stringify(given ?? null));
+  // validate given against question type/options
+  const opts = JSON.parse(q.options);
+  if (!Array.isArray(given)) return res.status(400).json({ error: "Invalid answer format" });
+  given = given.map(v => sanitize(String(v))).filter(Boolean);
+  if (given.some(g => !opts.includes(g))) return res.status(400).json({ error: "Answer contains invalid option" });
+  if (q.type !== "multi" && given.length !== 1) return res.status(400).json({ error: "Single answer required for this question type" });
+  if (given.length > 6) return res.status(400).json({ error: "Too many answers" });
+  db.prepare("INSERT INTO attempt_answers (attempt_id, question_id, given, is_correct, marks_awarded) VALUES (?, ?, ?, NULL, 0) ON CONFLICT(attempt_id, question_id) DO UPDATE SET given=excluded.given").run(attempt.id, q.id, JSON.stringify(given));
   res.json({ ok: true });
 });
 
@@ -242,8 +287,8 @@ app.get("/api/attempts/:id", requireAuth, (req, res) => {
 app.get("/api/results", requireAuth, (req, res) => {
   const examId = req.query.examId ? Number(req.query.examId) : null;
   let rows;
-  if (examId) rows = db.prepare("SELECT * FROM attempts WHERE exam_id=? AND status='graded' ORDER BY percent DESC").all(examId);
-  else rows = db.prepare("SELECT * FROM attempts WHERE status='graded' ORDER BY submitted_at DESC LIMIT 100").all();
+  if (examId) rows = db.prepare("SELECT id, exam_id, user_id, username, score, total, percent, passed, submitted_at FROM attempts WHERE exam_id=? AND status='graded' ORDER BY percent DESC").all(examId);
+  else rows = db.prepare("SELECT id, exam_id, user_id, username, score, total, percent, passed, submitted_at FROM attempts WHERE status='graded' ORDER BY submitted_at DESC LIMIT 100").all();
   if (req.user.role !== "admin") rows = rows.filter(r=>r.user_id===req.user.id);
   res.json(rows);
 });
@@ -268,27 +313,34 @@ app.get("/api/proctor/snapshots/:attemptId", requireAuth, (req, res) => {
   res.json(rows.map(r=>({ ...r, url: `/uploads/proctor/${attempt.id}/${r.file_path.split(/[\\/]/).pop()}` })));
 });
 app.get("/api/proctor/snapshot/:attemptId/:fname", (req, res) => {
-  // allow token via Authorization header OR ?token= query (needed for <img> tags)
   let user = null;
   const header = req.headers.authorization || "";
-  let token = header.startsWith("Bearer ") ? header.slice(7) : null;
-  if (!token && req.query.token) token = String(req.query.token);
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   if (token) {
     try { const p = verifyToken(token); user = { id: Number(p.sub), username: p.username, role: p.role }; } catch {}
   }
   if (!user) return res.status(401).send("unauthorized");
+  const fname = path.basename(req.params.fname);
+  if (!/^\d+-\d+\.jpg$/.test(fname)) return res.status(400).send("invalid file name");
   const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.attemptId));
   if (!attempt) return res.status(404).send("not found");
   if (user.role!=="admin" && attempt.user_id!==user.id) return res.status(403).send("forbidden");
-  const file = path.join(__dirname, "..", "uploads", "proctor", String(attempt.id), path.basename(req.params.fname));
+  const file = path.join(__dirname, "..", "uploads", "proctor", String(attempt.id), fname);
   if (!fs.existsSync(file)) return res.status(404).send("not found");
+  res.setHeader("Cache-Control", "private, no-store");
   res.sendFile(file);
+});
+
+// global error handler - hide stack traces from client
+app.use((err, _req, res, _next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal server error" });
 });
 
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: corsOrigin ? corsOrigin.split(",").map(s=>s.trim()).filter(Boolean) : true,
+    origin: allowedOrigins.length ? allowedOrigins : (process.env.NODE_ENV !== "production" ? true : false),
     credentials: true,
   },
 });

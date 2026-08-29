@@ -260,6 +260,25 @@ function ResultsAdmin(){
   );
 }
 
+function ProctorImage({ url, alt }) {
+  const [src, setSrc] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+    fetch(url, { headers: { Authorization: `Bearer ${getToken()||""}` } })
+      .then(r => r.ok ? r.blob() : Promise.reject(new Error("Failed to load image")))
+      .then(blob => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      })
+      .catch(() => setSrc(null));
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [url]);
+  if (!src) return <div className="w-full aspect-[4/3] bg-black/40 animate-pulse" />;
+  return <img src={src} alt={alt} className="w-full aspect-[4/3] object-cover bg-black/40" />;
+}
+
 function ProctorWall(){
   const [frames,setFrames]=useState({}); // attemptId -> {username, url, ts}
   useEffect(()=>{
@@ -282,7 +301,7 @@ function ProctorWall(){
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {entries.map(f=>(
             <div key={f.attemptId} className="glass rounded-2xl overflow-hidden">
-              <img src={`${f.url}${f.url.includes('?')?'&':'?'}token=${encodeURIComponent(getToken()||'')}`} alt={f.username} className="w-full aspect-[4/3] object-cover bg-black/40"/>
+              <ProctorImage url={f.url} alt={f.username} />
               <div className="p-3 flex items-center justify-between">
                 <span className="text-sm font-medium">{f.username}</span>
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/>

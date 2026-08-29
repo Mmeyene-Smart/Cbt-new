@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, "..", "cbt.db");
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL;");
+db.exec("PRAGMA foreign_keys = ON;");
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -85,20 +86,21 @@ try {
   }
 } catch {}
 
-// seed admin + demo students + demo exams if empty
+// seed admin + demo students + demo exams if empty (dev only)
 const userCount = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
-if (!userCount) {
+if (!userCount && process.env.NODE_ENV !== "production") {
   const now = Date.now();
-  // Use bcrypt hashes generated at runtime via auth module? For seed we insert with known passwords via bcryptjs sync
   const bcrypt = await import("bcryptjs");
-  const hashAdmin = bcrypt.hashSync("Minator1!", 10);
-  const hashStudent = bcrypt.hashSync("student123", 10);
-  const ins = db.prepare("INSERT INTO users (username, password_hash, role, full_name, student_code, created_at) VALUES (?, ?, ?, ?, ?, ?)");
-  ins.run("admin", hashAdmin, "admin", "Administrator", null, now);
-  ins.run("mmeyene", hashStudent, "student", "Mmeyene Aloysius", "STU001", now);
-  ins.run("demo_student", hashStudent, "student", "Demo Student", "STU002", now);
-  ins.run("john_doe", hashStudent, "student", "John Doe", "STU003", now);
-  console.log("[db] seeded users (admin / mmeyene / demo_student / john_doe)");
+  const adminPass = process.env.ADMIN_PASSWORD || "Minator1!";
+  const hashAdmin = bcrypt.hashSync(adminPass, 12);
+  const hashStudent = bcrypt.hashSync("student123", 12);
+  const ins = db.prepare("INSERT INTO users (username, password_hash, role, full_name, student_code, subjects, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  ins.run("admin", hashAdmin, "admin", "Administrator", null, JSON.stringify([]), now);
+  ins.run("mmeyene", hashStudent, "student", "Mmeyene Aloysius", "STU001", JSON.stringify(["General"]), now);
+  ins.run("demo_student", hashStudent, "student", "Demo Student", "STU002", JSON.stringify(["General"]), now);
+  ins.run("john_doe", hashStudent, "student", "John Doe", "STU003", JSON.stringify(["Computer Science"]), now);
+  console.log("[db] seeded dev users (admin / demo students)");
+  if (!process.env.ADMIN_PASSWORD) console.warn("[db] Using default admin password. Set ADMIN_PASSWORD env in production!");
 }
 
 const examCount = db.prepare("SELECT COUNT(*) AS n FROM exams").get().n;

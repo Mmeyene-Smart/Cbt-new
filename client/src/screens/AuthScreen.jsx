@@ -36,7 +36,6 @@ export default function AuthScreen({ onAuth }){
           <span className="grad-bg mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl"><GraduationCap className="h-6 w-6 text-night"/></span>
           <h1 className="text-gradient font-display text-2xl font-bold">CBT Platform</h1>
           <p className="text-sm text-zinc-500">Live proctored exams</p>
-          <p className="mt-2 text-xs text-zinc-600">Demo: admin/Minator1! · mmeyene/student123</p>
         </div>
         <div className="mb-4 grid grid-cols-2 rounded-xl border border-white/10 bg-night/60 p-1 text-sm">
           {["login","register"].map(m=>(

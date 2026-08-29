@@ -9,11 +9,16 @@ import db from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const secretFile = path.join(__dirname, "..", ".jwt-secret");
-let SECRET;
-if (fs.existsSync(secretFile)) SECRET = fs.readFileSync(secretFile, "utf8").trim();
-else {
-  SECRET = crypto.randomBytes(48).toString("hex");
-  fs.writeFileSync(secretFile, SECRET);
+let SECRET = process.env.JWT_SECRET;
+if (!SECRET) {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("JWT_SECRET environment variable is required in production");
+  }
+  if (fs.existsSync(secretFile)) SECRET = fs.readFileSync(secretFile, "utf8").trim();
+  else {
+    SECRET = crypto.randomBytes(48).toString("hex");
+    fs.writeFileSync(secretFile, SECRET, { mode: 0o600 });
+  }
 }
 
 export function verifyToken(token) {
@@ -57,17 +62,27 @@ router.post("/register", async (req, res) => {
   }
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(username))
     return res.status(400).json({ error: "Username 3-20 chars (letters, numbers, underscore)." });
-  if (password.length < 6) return res.status(400).json({ error: "Password at least 6 chars." });
+  if (password.length < 8 || !/(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])/.test(password))
+    return res.status(400).json({ error: "Password must be at least 8 characters with uppercase, lowercase, and number." });
   if (role === "student" && subjects.length === 0)
     return res.status(400).json({ error: "Please select at least one subject." });
-  const hash = await bcrypt.hash(password, 10);
-  const studentCode = role === "student" ? `STU${String(Date.now()).slice(-6)}` : null;
+  const hash = await bcrypt.hash(password, 12);
+  let studentCode = null;
+  if (role === "student") {
+    // Use crypto-random code and ensure uniqueness
+    for (let attempts = 0; attempts < 5; attempts++) {
+      const candidate = `STU${String(crypto.randomInt(100000, 999999))}`;
+      const exists = db.prepare("SELECT id FROM users WHERE student_code = ?").get(candidate);
+      if (!exists) { studentCode = candidate; break; }
+    }
+    if (!studentCode) studentCode = `STU${String(Date.now()).slice(-6)}${String(crypto.randomInt(10, 99))}`;
+  }
   try {
     const info = db
       .prepare("INSERT INTO users (username, password_hash, role, full_name, student_code, subjects, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(username, hash, role, fullName, studentCode, JSON.stringify(subjects), Date.now());
     const id = Number(info.lastInsertRowid);
-    const token = jwt.sign({ sub: id, username, role }, SECRET, { expiresIn: "7d" });
+    const token = jwt.sign({ sub: id, username, role }, SECRET, { expiresIn: "1d" });
     res.json({ token, user: { id, username, role, full_name: fullName, student_code: studentCode, subjects } });
   } catch (e) {
     if (String(e.message).includes("UNIQUE")) return res.status(409).json({ error: "Username taken." });
@@ -84,7 +99,7 @@ router.post("/login", async (req, res) => {
   if (!user || !ok) return res.status(401).json({ error: "Invalid username or password." });
   let subjects = [];
   try { subjects = user.subjects ? JSON.parse(user.subjects) : []; } catch { subjects = []; }
-  const token = jwt.sign({ sub: user.id, username: user.username, role: user.role }, SECRET, { expiresIn: "7d" });
+  const token = jwt.sign({ sub: user.id, username: user.username, role: user.role }, SECRET, { expiresIn: "1d" });
   res.json({
     token,
     user: { id: user.id, username: user.username, role: user.role, full_name: user.full_name, student_code: user.student_code, subjects },
