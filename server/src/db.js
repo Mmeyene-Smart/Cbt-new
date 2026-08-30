@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = path.join(__dirname, "..", "cbt.db");
+const dbPath = process.env.DB_PATH || path.join(__dirname, "..", "cbt.db");
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA foreign_keys = ON;");
@@ -194,8 +194,8 @@ for (const [slug, title, subject] of [
   }
 }
 
-// ensure uploads dir exists
-const uploadsDir = path.join(__dirname, "..", "uploads", "proctor");
+// ensure uploads dir exists (honor UPLOADS_DIR for persistent disk)
+const uploadsDir = path.join(process.env.UPLOADS_DIR || path.join(__dirname, "..", "uploads"), "proctor");
 fs.mkdirSync(uploadsDir, { recursive: true });
 
 export default db;

@@ -18,6 +18,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const corsOrigin = process.env.CORS_ORIGIN;
 const allowedOrigins = corsOrigin ? corsOrigin.split(",").map(s=>s.trim()).filter(Boolean) : [];
+const UPLOADS_BASE = process.env.UPLOADS_DIR || path.join(__dirname, "..", "uploads");
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "same-site" },
   contentSecurityPolicy: {
@@ -351,7 +352,7 @@ app.get("/api/proctor/snapshot/:attemptId/:fname", (req, res) => {
   const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.attemptId));
   if (!attempt) return res.status(404).send("not found");
   if (user.role!=="admin" && attempt.user_id!==user.id) return res.status(403).send("forbidden");
-  const file = path.join(__dirname, "..", "uploads", "proctor", String(attempt.id), fname);
+  const file = path.join(UPLOADS_BASE, "proctor", String(attempt.id), fname);
   if (!fs.existsSync(file)) return res.status(404).send("not found");
   res.setHeader("Cache-Control", "private, no-store");
   res.sendFile(file);
@@ -406,12 +407,20 @@ io.on("connection", (socket) => {
     if (b64.length > 500000) return;
     let buf;
     try { buf = Buffer.from(b64, "base64"); if (buf.length<100 || buf[0]!==0xff || buf[1]!==0xd8) return; } catch { return; }
-    const dir = path.join(__dirname, "..", "uploads", "proctor", String(attemptId));
+    // rate limit: max 15 snapshots per minute per socket (proper bucket)
+    const now = Date.now();
+    if (!socket.data._snapWindow || now - socket.data._snapWindow > 60000) {
+      socket.data._snapWindow = now;
+      socket.data._snapCount = 0;
+    }
+    if (socket.data._snapCount >= 15) return;
+    socket.data._snapCount++;
+    const dir = path.join(UPLOADS_BASE, "proctor", String(attemptId));
     fs.mkdirSync(dir, { recursive: true });
     const fname = `${Date.now()}-${socket.data.userId}.jpg`;
     const filePath = path.join(dir, fname);
     fs.writeFileSync(filePath, buf);
-    db.prepare("INSERT INTO proctor_snapshots (attempt_id, user_id, captured_at, file_path) VALUES (?, ?, ?, ?)").run(Number(attemptId), socket.data.userId, Date.now(), path.relative(path.join(__dirname,".."), filePath));
+    db.prepare("INSERT INTO proctor_snapshots (attempt_id, user_id, captured_at, file_path) VALUES (?, ?, ?, ?)").run(Number(attemptId), socket.data.userId, Date.now(), path.relative(UPLOADS_BASE, filePath));
     io.to("proctor:admin").emit("proctor:frame", {
       attemptId: Number(attemptId),
       userId: socket.data.userId,
