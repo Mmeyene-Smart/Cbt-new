@@ -94,24 +94,36 @@ app.get("/api/students", requireAuth, requireRole("admin"), (_req, res) => {
 });
 
 app.get("/api/exams/template.xlsx", requireAuth, requireRole("admin"), async (_req, res) => {
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet("Questions");
-  ws.columns = [
-    { header: "Type (mcq/multi/tf)", key: "type", width: 18 },
-    { header: "Prompt", key: "prompt", width: 50 },
-    { header: "Options (comma-separated)", key: "options", width: 40 },
-    { header: "Answer(s) (comma-separated, must match Options)", key: "answer", width: 40 },
-    { header: "Marks", key: "marks", width: 10 },
-  ];
-  ws.addRow({ type: "mcq", prompt: "What is the capital of Nigeria?", options: "Lagos,Abuja,Kano", answer: "Abuja", marks: 1 });
-  ws.addRow({ type: "multi", prompt: "Select all valid CSS units", options: "px,em,kg,rem", answer: "px,em,rem", marks: 1 });
-  ws.addRow({ type: "tf", prompt: "Node.js can run outside the browser.", options: "True,False", answer: "True", marks: 1 });
-  ws.getRow(1).font = { bold: true };
-  ws.getRow(1).commitRow();
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  res.setHeader("Content-Disposition", "attachment; filename=questions_template.xlsx");
-  await wb.xlsx.write(res);
-  res.end();
+  try {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Questions");
+    ws.columns = [
+      { header: "Type (mcq/multi/tf)", key: "type", width: 18 },
+      { header: "Prompt", key: "prompt", width: 50 },
+      { header: "Options (comma-separated)", key: "options", width: 40 },
+      { header: "Answer(s) (comma-separated, must match Options)", key: "answer", width: 40 },
+      { header: "Marks", key: "marks", width: 10 },
+    ];
+    // header styling
+    const headerRow = ws.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF16A34A" } };
+    headerRow.alignment = { horizontal: "center", vertical: "middle" };
+    headerRow.commitRow();
+    // data rows
+    ws.addRow({ type: "mcq", prompt: "What is the capital of Nigeria?", options: "Lagos,Abuja,Kano", answer: "Abuja", marks: 1 });
+    ws.addRow({ type: "multi", prompt: "Select all valid CSS units", options: "px,em,kg,rem", answer: "px,em,rem", marks: 1 });
+    ws.addRow({ type: "tf", prompt: "Node.js can run outside the browser.", options: "True,False", answer: "True", marks: 1 });
+    // auto-filter
+    ws.autoFilter = { from: "A1", to: "E1" };
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", "attachment; filename=questions_template.xlsx");
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (e) {
+    console.error("Template generation failed", e);
+    if (!res.headersSent) res.status(500).json({ error: "Failed to generate template" });
+  }
 });
 
 app.get("/api/exams", requireAuth, (_req, res) => {
