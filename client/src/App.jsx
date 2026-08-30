@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AuthScreen from "./screens/AuthScreen.jsx";
-import { getUser, setSession, clearSession, api, getToken } from "./lib/api.js";
+import { getUser, setSession, clearSession, api, getToken, apiUrl } from "./lib/api.js";
 import { getSocket, destroySocket } from "./lib/socket.js";
 import useCamera from "./hooks/useCamera.js";
 import useScreenShare from "./hooks/useScreenShare.js";
@@ -152,8 +152,7 @@ function ExamsAdmin(){
               <div className="flex gap-2">
                 <button onClick={async()=>{
                   try{
-                    const token = localStorage.getItem("cbt.token");
-                    const res = await fetch(`/api/exams/template.xlsx`, { headers: { Authorization: `Bearer ${token}` }});
+                    const res = await fetch(apiUrl("/api/exams/template.xlsx"), { headers: { Authorization: `Bearer ${getToken()||""}` }});
                     if(!res.ok) throw new Error("Failed to download template");
                     const blob = await res.blob();
                     const url = URL.createObjectURL(blob);
@@ -170,9 +169,9 @@ function ExamsAdmin(){
                     const fd = new FormData();
                     fd.append("file", file);
                     try{
-                      const res = await fetch(`/api/exams/${selected.id}/questions/import`, {
+                      const res = await fetch(apiUrl(`/api/exams/${selected.id}/questions/import`), {
                         method: "POST",
-                        headers: { Authorization: `Bearer ${localStorage.getItem("cbt.token")}` },
+                        headers: { Authorization: `Bearer ${getToken()||""}` },
                         body: fd
                       });
                       const data = await res.json();
@@ -436,14 +435,22 @@ function ExamPlayer({exam, user, onBack}){
   const startExam=async()=>{
     if(exam.camera_required && (!cameraConsent || !screenConsent)) return alert("Please consent to camera and screen sharing to start this exam.");
     if(exam.camera_required){
-      await camera.start();
-      await screen.start();
-      if(camera.state==="denied" || screen.state==="denied"){
-        // allow retry, but still require consent
+      // gate on the actual permission result — `camera.state` here is stale from this render
+      const camOk = await camera.start();
+      if(!camOk) return alert("Camera access is required for this exam. Please allow camera access and try again.");
+      const scrOk = await screen.start();
+      if(!scrOk){
+        camera.stop();
+        return alert("Whole-screen sharing is required for this exam. Please share your entire screen and try again.");
       }
     }
-    const data=await api("/api/attempts/start",{method:"POST", body:{examId: exam.id, cameraConsentAt: cameraConsent?Date.now():null}});
-    setAttempt(data); setEndsAt(data.endsAt); setStarted(true);
+    try{
+      const data=await api("/api/attempts/start",{method:"POST", body:{examId: exam.id, cameraConsentAt: cameraConsent?Date.now():null}});
+      setAttempt(data); setEndsAt(data.endsAt); setStarted(true);
+    }catch(e){
+      camera.stop(); screen.stop();
+      alert(e.message);
+    }
   };
 
   const saveAnswer=async(qid, given)=>{

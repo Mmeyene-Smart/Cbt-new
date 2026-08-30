@@ -18,7 +18,7 @@ export default function useScreenShare() {
     if (!navigator.mediaDevices?.getDisplayMedia) {
       setState("blocked");
       setError("Screen sharing not supported in this browser. Use Chrome/Edge on HTTPS or localhost.");
-      return;
+      return false;
     }
     setState("requesting");
     try {
@@ -38,10 +38,12 @@ export default function useScreenShare() {
         setState("idle");
         setError("Screen sharing stopped.");
       });
+      return true;
     } catch (e) {
       const name = e?.name || "";
       if (name === "NotAllowedError") { setState("denied"); setError("Screen sharing permission denied. Please allow to continue."); }
       else { setState("error"); setError(e.message || "Screen sharing error"); }
+      return false;
     }
   }, []);
 

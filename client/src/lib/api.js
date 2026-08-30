@@ -7,7 +7,7 @@ export const clearSession=()=>{localStorage.removeItem(TOKEN_KEY);localStorage.r
 // Vercel production: set VITE_API_URL in dashboard (e.g., https://your-api.onrender.com)
 // Local dev: leave empty to use Vite proxy (/api -> 127.0.0.1:4001)
 const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
-function apiUrl(path){ return API_BASE ? `${API_BASE}${path}` : path; }
+export function apiUrl(path){ return API_BASE ? `${API_BASE}${path}` : path; }
 export async function api(path,{method="GET",body}={}){
   const headers={};
   if(body && !(body instanceof FormData)) headers["Content-Type"]="application/json";

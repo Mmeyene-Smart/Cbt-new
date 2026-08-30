@@ -21,25 +21,34 @@ export default function useCamera(enabled) {
     if (!navigator.mediaDevices?.getUserMedia) {
       setState("blocked");
       setError("Camera not supported in this browser/context. Use HTTPS or localhost.");
-      return;
+      return false;
     }
     setState("requesting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 }, audio: false });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(()=>{});
+      // NOTE: videoRef is the callback ref (a function) — it has no .current.
+      // Always attach through videoElRef, which holds the real DOM node.
+      if (videoElRef.current) {
+        videoElRef.current.srcObject = stream;
+        await videoElRef.current.play().catch(()=>{});
       }
       setState("granted");
       setError("");
+      // handle the camera being unplugged / revoked
+      stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+        setState("idle");
+        setError("Camera stopped.");
+      });
+      return true;
     } catch (e) {
       const name = e?.name || "";
       if (name === "NotAllowedError") { setState("denied"); setError("Camera permission denied. Enable it in browser settings and retry."); }
       else if (name === "NotFoundError") { setState("error"); setError("No camera found."); }
       else { setState("error"); setError(e.message || "Camera error"); }
+      return false;
     }
-  }, [enabled]);
+  }, []);
 
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach(t=>t.stop());
