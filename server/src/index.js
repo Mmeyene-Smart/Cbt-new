@@ -61,6 +61,20 @@ const sanitize = (str) => sanitizeHtml(String(str || ""), { allowedTags: [], all
 app.use("/api/auth", authRouter);
 app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 
+// One-time fix for live DB with no admin (Render free tier wipes DB) — creates admin if missing
+app.post("/api/fix-admin", async (_req, res) => {
+  try {
+    const exists = db.prepare("SELECT id FROM users WHERE username = ?").get("admin");
+    if (exists) return res.json({ message: "Admin already exists", id: exists.id });
+    const bcrypt = await import("bcryptjs");
+    const hash = bcrypt.hashSync("Minator1!", 12);
+    const info = db.prepare("INSERT INTO users (username, password_hash, role, full_name, student_code, subjects, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run("admin", hash, "admin", "Administrator", null, JSON.stringify([]), Date.now());
+    res.json({ message: "Admin created", id: Number(info.lastInsertRowid), username: "admin", password: "Minator1!" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Public: list distinct exam subjects for registration (reflects actual exams)
 app.get("/api/subjects", (_req, res) => {
   const rows = db.prepare("SELECT DISTINCT subject FROM exams WHERE subject IS NOT NULL AND TRIM(subject) != '' ORDER BY subject").all();
