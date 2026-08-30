@@ -10,8 +10,8 @@ export default function AuthScreen({ onAuth }){
   const [subjectOptions,setSubjectOptions]=useState([]);
   const [subjectsLoading,setSubjectsLoading]=useState(true);
   useEffect(()=>{
-    // fetch distinct exam subjects (public, reflects actual exams)
-    fetch("/api/subjects").then(r=>r.json()).then(data=>{
+    // fetch distinct exam subjects (public, reflects actual exams) — uses VITE_API_URL in production
+    api("/api/subjects").then(data=>{
       if(Array.isArray(data) && data.length) setSubjectOptions(data);
       else setSubjectOptions([]);
     }).catch(()=> setSubjectOptions([])).finally(()=> setSubjectsLoading(false));
@@ -34,8 +34,8 @@ export default function AuthScreen({ onAuth }){
       <div className="glass relative z-10 w-full max-w-sm rounded-3xl p-8">
         <div className="mb-6 text-center">
           <span className="grad-bg mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl"><GraduationCap className="h-6 w-6 text-night"/></span>
-          <h1 className="text-gradient font-display text-2xl font-bold">CBT Platform</h1>
-          <p className="text-sm text-zinc-500">Live proctored exams</p>
+          <h1 className="text-gradient font-display text-2xl font-bold">University CBT Portal</h1>
+          <p className="text-sm text-zinc-500">Secure Computer-Based Examinations</p>
         </div>
         <div className="mb-4 grid grid-cols-2 rounded-xl border border-white/10 bg-night/60 p-1 text-sm">
           {["login","register"].map(m=>(

@@ -117,33 +117,81 @@ if (!examCount) {
   const examIns = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
   const qIns = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)");
 
-  const e1 = examIns.run("general-knowledge-1", "General Knowledge — Demo", "General", 15, 50, "published", 1, "admin", now);
+  // GST 101 — Use of English (General Studies) — Professional university core
+  const e1 = examIns.run("gst-101-use-of-english", "GST 101 — Use of English", "General Studies", 30, 50, "published", 1, "admin", now);
   const e1id = Number(e1.lastInsertRowid);
   const qs1 = [
-    ["mcq", "What is the capital of Nigeria?", '["Lagos","Abuja","Kano","Port Harcourt"]', '["Abuja"]'],
-    ["mcq", "Which protocol secures HTTP?", '["FTP","TLS","SMTP","POP3"]', '["TLS"]'],
-    ["tf", "JavaScript is a compiled language.", '["True","False"]', '["False"]'],
-    ["mcq", "What does HTML stand for?", '["Hyper Text Markup Language","High Tech Modern Language","Hyperlink Text Module","Home Tool Markup"]', '["Hyper Text Markup Language"]'],
-    ["multi", "Which are JavaScript frameworks?", '["React","Django","Vue","Laravel"]', '["React","Vue"]'],
-    ["mcq", "Docker is used for?", '["Version control","Containerization","Database","Design"]', '["Containerization"]'],
-    ["mcq", "Which is NOT a NoSQL DB?", '["MongoDB","Redis","PostgreSQL","Cassandra"]', '["PostgreSQL"]'],
-    ["tf", "CSS stands for Cascading Style Sheets.", '["True","False"]', '["True"]'],
+    ["mcq", "Choose the correctly spelt word:", '["Accomodate","Accommodate","Acommodate","Accomodete"]', '["Accommodate"]'],
+    ["mcq", "Select the synonym of 'Meticulous':", '["Careless","Precise","Hasty","Loud"]', '["Precise"]'],
+    ["tf", "The sentence 'Neither of the students have submitted their assignment' is grammatically correct.", '["True","False"]', '["False"]'],
+    ["multi", "Which are parts of speech?", '["Noun","Verb","Conjunction","Photosynthesis"]', '["Noun","Verb","Conjunction"]'],
+    ["mcq", "Choose the correctly punctuated sentence:", '["Lets eat grandma.","Let\'s eat, grandma.","Lets, eat grandma.","Let’s eat grandma"]', '["Let\'s eat, grandma."]'],
+    ["mcq", "What is the antonym of 'Benevolent'?", '["Malevolent","Kind","Generous","Friendly"]', '["Malevolent"]'],
+    ["mcq", "Identify the figure of speech: 'The wind whispered through the trees.'", '["Simile","Metaphor","Personification","Hyperbole"]', '["Personification"]'],
+    ["tf", "A paragraph should contain only one main idea.", '["True","False"]', '["True"]'],
   ];
   qs1.forEach(([type, prompt, options, answer], i) => qIns.run(e1id, type, prompt, options, answer, 1, i));
 
-  const e2 = examIns.run("web-fundamentals", "Web Fundamentals", "Computer Science", 20, 50, "published", 1, "admin", now);
+  // MTH 101 — Elementary Mathematics
+  const e2 = examIns.run("mth-101-elementary-mathematics", "MTH 101 — Elementary Mathematics", "Mathematics", 30, 50, "published", 1, "admin", now);
   const e2id = Number(e2.lastInsertRowid);
   const qs2 = [
-    ["mcq", "Which tag is used for the largest heading?", '["<h6>","<h1>","<head>","<header>"]', '["<h1>"]'],
-    ["mcq", "Flexbox is a layout model for?", '["Grid only","One-dimensional layout","Database","Video"]', '["One-dimensional layout"]'],
-    ["multi", "Select all valid CSS units", '["px","em","kg","rem"]', '["px","em","rem"]'],
-    ["tf", "Node.js can run JavaScript outside the browser.", '["True","False"]', '["True"]'],
-    ["mcq", "What does API stand for?", '["Application Programming Interface","Applied Program Integration","Automated Process Interaction","App Panel Interface"]', '["Application Programming Interface"]'],
-    ["mcq", "Git is a?", '["Text editor","Version control system","Database","Framework"]', '["Version control system"]'],
+    ["mcq", "What is the derivative of sin(x)?", '["cos(x)","-cos(x)","-sin(x)","tan(x)"]', '["cos(x)"]'],
+    ["mcq", "Solve: 2x + 5 = 15. What is x?", '["5","10","7.5","2.5"]', '["5"]'],
+    ["multi", "Which are prime numbers?", '["2","4","7","9"]', '["2","7"]'],
+    ["tf", "The sum of angles in a triangle is 180 degrees.", '["True","False"]', '["True"]'],
+    ["mcq", "What is 7! (7 factorial)?", '["5040","720","40320","120"]', '["5040"]'],
+    ["mcq", "If log₁₀(100) = x, what is x?", '["1","2","10","100"]', '["2"]'],
   ];
   qs2.forEach(([type, prompt, options, answer], i) => qIns.run(e2id, type, prompt, options, answer, 1, i));
 
-  console.log("[db] seeded 2 demo exams");
+  // CSC 101 — Introduction to Computer Science
+  const e3 = examIns.run("csc-101-intro-computer-science", "CSC 101 — Introduction to Computer Science", "Computer Science", 30, 50, "published", 1, "admin", now);
+  const e3id = Number(e3.lastInsertRowid);
+  const qs3 = [
+    ["mcq", "What does CPU stand for?", '["Central Processing Unit","Computer Personal Unit"," Central Process Unit","Central Peripheral Unit"]', '["Central Processing Unit"]'],
+    ["mcq", "Which is a volatile memory?", '["ROM","HDD","RAM","SSD"]', '["RAM"]'],
+    ["tf", "An algorithm must terminate after a finite number of steps.", '["True","False"]', '["True"]'],
+    ["multi", "Which are high-level programming languages?", '["Python","Assembly","Java","Machine Code"]', '["Python","Java"]'],
+    ["mcq", "What is the time complexity of binary search?", '["O(n)","O(log n)","O(n²)","O(1)"]', '["O(log n)"]'],
+    ["mcq", "Which data structure uses LIFO principle?", '["Queue","Stack","Array","Tree"]', '["Stack"]'],
+    ["mcq", "What does SQL stand for?", '["Structured Query Language","Simple Query Language","Standard Query Language","System Query Language"]', '["Structured Query Language"]'],
+  ];
+  qs3.forEach(([type, prompt, options, answer], i) => qIns.run(e3id, type, prompt, options, answer, 1, i));
+
+  // PHY 101 — General Physics
+  const e4 = examIns.run("phy-101-general-physics", "PHY 101 — General Physics", "Physics", 30, 50, "published", 1, "admin", now);
+  const e4id = Number(e4.lastInsertRowid);
+  const qs4 = [
+    ["mcq", "What is the SI unit of force?", '["Joule","Newton","Watt","Pascal"]', '["Newton"]'],
+    ["tf", "Light travels faster than sound.", '["True","False"]', '["True"]'],
+    ["mcq", "Which law states F = ma?", '["Newton\'s First Law","Newton\'s Second Law","Ohm\'s Law","Coulomb\'s Law"]', '["Newton\'s Second Law"]'],
+    ["multi", "Which are vectors?", '["Force","Mass","Velocity","Speed"]', '["Force","Velocity"]'],
+    ["mcq", "What is the acceleration due to gravity (approx.)?", '["9.8 m/s²","10 m/s²","8.9 m/s²","11 m/s²"]', '["9.8 m/s²"]'],
+  ];
+  qs4.forEach(([type, prompt, options, answer], i) => qIns.run(e4id, type, prompt, options, answer, 1, i));
+
+  console.log("[db] seeded 4 professional university exams (GST 101, MTH 101, CSC 101, PHY 101)");
+}
+// ensure professional exams exist even on DBs that already had old demo exams
+for (const [slug, title, subject] of [
+  ["gst-101-use-of-english", "GST 101 — Use of English", "General Studies"],
+  ["mth-101-elementary-mathematics", "MTH 101 — Elementary Mathematics", "Mathematics"],
+  ["csc-101-intro-computer-science", "CSC 101 — Introduction to Computer Science", "Computer Science"],
+  ["phy-101-general-physics", "PHY 101 — General Physics", "Physics"],
+]) {
+  if (!db.prepare("SELECT id FROM exams WHERE slug = ?").get(slug)) {
+    const now2 = Date.now();
+    const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, 30, 50, "published", 1, "admin", now2);
+    const eid = Number(info.lastInsertRowid);
+    // minimal question set for migrated exams (full set is in the seed above, but ensure at least one question so exam is valid)
+    const qIns2 = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    if (slug.startsWith("gst-")) qIns2.run(eid, "mcq", "Choose the correctly spelt word:", '["Accomodate","Accommodate","Acommodate","Accomodete"]', '["Accommodate"]', 1, 0);
+    if (slug.startsWith("mth-")) qIns2.run(eid, "mcq", "What is the derivative of sin(x)?", '["cos(x)","-cos(x)","-sin(x)","tan(x)"]', '["cos(x)"]', 1, 0);
+    if (slug.startsWith("csc-")) qIns2.run(eid, "mcq", "What does CPU stand for?", '["Central Processing Unit","Computer Personal Unit"," Central Process Unit","Central Peripheral Unit"]', '["Central Processing Unit"]', 1, 0);
+    if (slug.startsWith("phy-")) qIns2.run(eid, "mcq", "What is the SI unit of force?", '["Joule","Newton","Watt","Pascal"]', '["Newton"]', 1, 0);
+    console.log(`[db] migrated professional exam ${slug}`);
+  }
 }
 
 // ensure uploads dir exists

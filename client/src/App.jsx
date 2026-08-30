@@ -24,7 +24,7 @@ function AdminShell({user,onLogout}){
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-white/5 bg-panel/70 backdrop-blur px-6">
-        <span className="font-display font-bold text-gradient">CBT Admin</span>
+        <span className="font-display font-bold text-gradient">University Examination Administration</span>
         <div className="flex items-center gap-3">
           <nav className="hidden md:flex gap-2 text-sm">
             {["dashboard","exams","students","results","proctor"].map(t=>(
@@ -75,11 +75,11 @@ function AdminDashboard(){
         </div>
       ))}
       <div className="md:col-span-3 glass rounded-2xl p-6">
-        <h3 className="font-semibold">Quick start</h3>
+        <h3 className="font-semibold">Examination Management Guide</h3>
         <ul className="mt-2 text-sm text-zinc-400 list-disc pl-5 space-y-1">
-          <li>Create an exam in Exams → add questions</li>
-          <li>Students log in as mmeyene/student123 and take it — camera snapshots stream to Proctor tab live</li>
-          <li>Results appear instantly after submit; Combined analysis in Results</li>
+          <li>Navigate to <b>Examinations</b> to create a new course examination and add questions via manual entry or Excel bulk import</li>
+          <li>Students authenticate with their credentials and complete timed, proctored assessments — live camera and screen feeds stream to the <b>Proctor</b> monitoring panel</li>
+          <li>Upon submission, results are automatically graded and available in <b>Results</b> with combined analytics for cohort performance</li>
         </ul>
       </div>
     </div>
@@ -322,7 +322,7 @@ function StudentShell({user,onLogout}){
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-white/5 bg-panel/70 backdrop-blur px-6">
-        <span className="font-display font-bold text-gradient">CBT Student</span>
+        <span className="font-display font-bold text-gradient">University Student Examination Portal</span>
         <div className="flex items-center gap-3">
           <button onClick={()=>setView("exams")} className={`px-3 py-1.5 rounded-lg text-sm ${view==="exams"?"bg-white/10":"text-zinc-400"}`}>Exams</button>
           <button onClick={()=>setView("results")} className={`px-3 py-1.5 rounded-lg text-sm ${view==="results"?"bg-white/10":"text-zinc-400"}`}>My Results</button>
@@ -480,9 +480,9 @@ function ExamPlayer({exam, user, onBack}){
         <h3 className="font-semibold text-lg">{exam.title}</h3>
         <p className="text-sm text-zinc-500">{exam.subject} · {exam.duration_minutes} min · {questions.length} questions</p>
         <div className="mt-4 space-y-2 text-sm text-zinc-300">
-          <p>• You have {exam.duration_minutes} minutes. Timer is server-enforced.</p>
-          <p>• Answers auto-save on selection.</p>
-          {exam.camera_required && <p className="flex items-center gap-2 text-amber-300"><Camera className="h-4 w-4"/> Live camera + <Monitor className="h-4 w-4"/> whole-screen snapshots every 5s (HTTPS/localhost required).</p>}
+          <p>• <b>Duration:</b> {exam.duration_minutes} minutes. The countdown is server-enforced and auto-submits upon expiry.</p>
+          <p>• <b>Auto-save:</b> Your selected answers are saved instantly upon selection.</p>
+          {exam.camera_required && <p className="flex items-center gap-2 text-amber-300"><Camera className="h-4 w-4"/> <Monitor className="h-4 w-4"/> Proctored examination — live camera and full-screen snapshots every 5 seconds (requires HTTPS or localhost).</p>}
         </div>
         {exam.camera_required && (
           <>
