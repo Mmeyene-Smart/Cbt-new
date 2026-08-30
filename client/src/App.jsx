@@ -432,17 +432,27 @@ function ExamPlayer({exam, user, onBack}){
   const remaining = endsAt ? Math.max(0, Math.floor((endsAt - now)/1000)) : 0;
   const mins = Math.floor(remaining/60); const secs = remaining%60;
 
+  // getDisplayMedia() requires transient user activation: it must be invoked in the
+  // same synchronous turn as a real click, with no prior `await`. So camera and screen
+  // are enabled by their own dedicated buttons rather than from inside startExam().
+  const enableCamera=async()=>{
+    if(!cameraConsent) return alert("Please tick the camera consent box first.");
+    await camera.start();
+  };
+  const enableScreen=()=>{
+    if(!screenConsent) return alert("Please tick the screen-sharing consent box first.");
+    // NOTE: no await before this call — doing so would consume the click's activation.
+    return screen.start();
+  };
+
+  const proctorReady = !exam.camera_required || (camera.state==="granted" && screen.state==="granted");
+
   const startExam=async()=>{
-    if(exam.camera_required && (!cameraConsent || !screenConsent)) return alert("Please consent to camera and screen sharing to start this exam.");
     if(exam.camera_required){
-      // gate on the actual permission result — `camera.state` here is stale from this render
-      const camOk = await camera.start();
-      if(!camOk) return alert("Camera access is required for this exam. Please allow camera access and try again.");
-      const scrOk = await screen.start();
-      if(!scrOk){
-        camera.stop();
-        return alert("Whole-screen sharing is required for this exam. Please share your entire screen and try again.");
-      }
+      if(!cameraConsent || !screenConsent) return alert("Please consent to camera and screen sharing to start this exam.");
+      // safe to read state here: grants happened in earlier clicks, so this is not stale
+      if(camera.state!=="granted") return alert("Enable your camera before starting this exam.");
+      if(screen.state!=="granted") return alert("Share your entire screen before starting this exam.");
     }
     try{
       const data=await api("/api/attempts/start",{method:"POST", body:{examId: exam.id, cameraConsentAt: cameraConsent?Date.now():null}});
@@ -501,19 +511,32 @@ function ExamPlayer({exam, user, onBack}){
               <input type="checkbox" checked={screenConsent} onChange={e=>setScreenConsent(e.target.checked)} className="mt-1"/>
               <span>I consent to <b>whole-screen sharing</b> — my entire window will be captured every 5s for proctoring.</span>
             </label>
+            <div className="mt-4 space-y-2">
+              <button type="button" onClick={enableCamera} disabled={camera.state==="granted"||camera.state==="requesting"}
+                className="w-full flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm hover:bg-white/10 disabled:opacity-60">
+                <span className="flex items-center gap-2"><Camera className="h-4 w-4"/> {camera.state==="granted"?"Camera enabled":camera.state==="requesting"?"Requesting camera…":"Step 1 — Enable camera"}</span>
+                {camera.state==="granted" ? <CheckCircle className="h-4 w-4 text-emerald-500"/> : <span className="text-xs text-zinc-500">required</span>}
+              </button>
+              <button type="button" onClick={enableScreen} disabled={screen.state==="granted"||screen.state==="requesting"}
+                className="w-full flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm hover:bg-white/10 disabled:opacity-60">
+                <span className="flex items-center gap-2"><Monitor className="h-4 w-4"/> {screen.state==="granted"?"Screen sharing enabled":screen.state==="requesting"?"Waiting for screen picker…":"Step 2 — Share entire screen"}</span>
+                {screen.state==="granted" ? <CheckCircle className="h-4 w-4 text-emerald-500"/> : <span className="text-xs text-zinc-500">required</span>}
+              </button>
+              <p className="text-xs text-zinc-500">Choose <b>Entire Screen</b> in the picker — sharing a single tab or window will be rejected by your invigilator.</p>
+            </div>
           </>
         )}
         {camera.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>{camera.error}</p>}
         {screen.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>Screen: {screen.error}</p>}
         <div className="mt-6 flex gap-3">
           <button onClick={onBack} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm">Cancel</button>
-          <button onClick={startExam} className="grad-bg flex-1 rounded-xl py-2.5 font-semibold text-night">Start exam</button>
+          <button onClick={startExam} disabled={!proctorReady} className="grad-bg flex-1 rounded-xl py-2.5 font-semibold text-night disabled:opacity-50 disabled:cursor-not-allowed">
+            {proctorReady ? "Start exam" : "Complete the steps above"}
+          </button>
         </div>
         {/* hidden video elements for snapshot capture — no self-view but still capturable */}
         <video ref={camera.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
         <video ref={screen.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
-        {camera.state==="granted" && <p className="mt-3 text-xs text-emerald-600 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"/> Camera active</p>}
-        {screen.state==="granted" && <p className="text-xs text-emerald-600 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"/> Screen sharing active</p>}
       </div>
     );
   }
