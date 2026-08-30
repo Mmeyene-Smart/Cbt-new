@@ -240,8 +240,10 @@ app.post("/api/attempts/start", requireAuth, requireRole("student"), (req, res) 
   const cameraConsentAt = req.body?.cameraConsentAt ? Number(req.body.cameraConsentAt) : null;
   const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(examId);
   if (!exam) return res.status(404).json({ error: "Exam not found" });
-  const existing = db.prepare("SELECT * FROM attempts WHERE exam_id=? AND user_id=? AND status='in_progress'").get(examId, req.user.id);
-  if (existing) return res.json({ attemptId: existing.id, endsAt: existing.ends_at, exam });
+  // allow concurrent same-account logins to have separate attempts if they explicitly want a new one
+  // by default, resume existing attempt to avoid duplicate in-progress rows from refreshes
+  const existing = db.prepare("SELECT * FROM attempts WHERE exam_id=? AND user_id=? AND status='in_progress' ORDER BY started_at DESC LIMIT 1").get(examId, req.user.id);
+  if (existing && !req.body?.forceNew) return res.json({ attemptId: existing.id, endsAt: existing.ends_at, exam });
   const qCount = db.prepare("SELECT COUNT(*) as n FROM questions WHERE exam_id=?").get(examId).n;
   if (!qCount) return res.status(400).json({ error: "Exam has no questions" });
   const now = Date.now();

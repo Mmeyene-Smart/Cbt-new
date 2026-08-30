@@ -502,20 +502,11 @@ function ExamPlayer({exam, user, onBack}){
           <button onClick={onBack} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm">Cancel</button>
           <button onClick={startExam} className="grad-bg flex-1 rounded-xl py-2.5 font-semibold text-night">Start exam</button>
         </div>
-        <div className="mt-4 grid grid-cols-1 gap-3">
-          <div className="rounded-xl bg-black/30 p-3">
-            <p className="text-xs text-zinc-500 mb-2 flex items-center gap-1"><Camera className="h-3 w-3"/> Camera preview</p>
-            <video ref={camera.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
-            <p className="text-xs text-zinc-600 mt-1">State: {camera.state}</p>
-          </div>
-          {exam.camera_required && (
-            <div className="rounded-xl bg-black/30 p-3">
-              <p className="text-xs text-zinc-500 mb-2 flex items-center gap-1"><Monitor className="h-3 w-3"/> Screen share preview (whole window)</p>
-              <video ref={screen.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
-              <p className="text-xs text-zinc-600 mt-1">State: {screen.state}</p>
-            </div>
-          )}
-        </div>
+        {/* hidden video elements for snapshot capture — no self-view but still capturable */}
+        <video ref={camera.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
+        <video ref={screen.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
+        {camera.state==="granted" && <p className="mt-3 text-xs text-emerald-600 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"/> Camera active</p>}
+        {screen.state==="granted" && <p className="text-xs text-emerald-600 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"/> Screen sharing active</p>}
       </div>
     );
   }
@@ -554,16 +545,13 @@ function ExamPlayer({exam, user, onBack}){
       </div>
       <div className="space-y-4">
         <div className="glass rounded-2xl p-4">
-          <p className="text-xs text-zinc-500 mb-2 flex items-center gap-1"><Camera className="h-3 w-3"/> Camera {exam.camera_required?"(required)":""}</p>
-          <video ref={camera.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
-          {camera.state==="granted" && <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/> Camera live</p>}
-          {camera.error && <p className="text-xs text-rose-300 mt-2">{camera.error}</p>}
-        </div>
-        <div className="glass rounded-2xl p-4">
-          <p className="text-xs text-zinc-500 mb-2 flex items-center gap-1"><Monitor className="h-3 w-3"/> Screen share {exam.camera_required?"(required)":""}</p>
-          <video ref={screen.videoRef} autoPlay muted playsInline className="w-full aspect-video rounded-xl bg-black object-cover"/>
-          {screen.state==="granted" && <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/> Screen live</p>}
-          {screen.error && <p className="text-xs text-rose-300 mt-2">{screen.error}</p>}
+          <p className="text-xs font-medium text-zinc-600">Proctoring</p>
+          <p className="mt-2 text-xs flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${camera.state==="granted"?"bg-emerald-500 animate-pulse":"bg-zinc-300"}`}/> Camera {camera.state==="granted"?"active":"not active"}</p>
+          <p className="text-xs flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${screen.state==="granted"?"bg-emerald-500 animate-pulse":"bg-zinc-300"}`}/> Screen share {screen.state==="granted"?"active":"not active"}</p>
+          {(camera.error || screen.error) && <p className="mt-2 text-xs text-rose-500">{camera.error || screen.error}</p>}
+          {/* hidden video elements for capture — no self-view but still capturable */}
+          <video ref={camera.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
+          <video ref={screen.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
         </div>
         <div className="glass rounded-2xl p-4">
           <p className="text-sm font-semibold mb-2">Questions</p>
