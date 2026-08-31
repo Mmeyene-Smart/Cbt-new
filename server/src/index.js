@@ -401,7 +401,10 @@ app.get("/api/proctor/snapshots/:attemptId", requireAuth, (req, res) => {
   if (!attempt) return res.status(404).json({ error: "Attempt not found" });
   if (req.user.role === "student" && attempt.user_id !== req.user.id) return res.status(403).json({error:"Forbidden"});
   const rows = db.prepare("SELECT id, captured_at, file_path FROM proctor_snapshots WHERE attempt_id=? ORDER BY captured_at DESC LIMIT 100").all(attempt.id);
-  res.json(rows.map(r=>({ ...r, url: `/uploads/proctor/${attempt.id}/${r.file_path.split(/[\\/]/).pop()}` })));
+  res.json(rows.map(r => {
+    const fname = r.file_path.split(/[\\/]/).pop();
+    return { ...r, url: `/api/proctor/snapshot/${attempt.id}/${fname}` };
+  }));
 });
 app.get("/api/proctor/snapshot/:attemptId/:fname", (req, res) => {
   let user = null;

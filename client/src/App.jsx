@@ -324,7 +324,7 @@ function ProctorImage({ url, alt }) {
   useEffect(() => {
     let cancelled = false;
     let objectUrl = null;
-    fetch(url, { headers: { Authorization: `Bearer ${getToken()||""}` } })
+    fetch(apiUrl(url), { headers: { Authorization: `Bearer ${getToken()||""}` } })
       .then(r => r.ok ? r.blob() : Promise.reject(new Error("Failed to load image")))
       .then(blob => {
         if (cancelled) return;
