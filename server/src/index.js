@@ -84,7 +84,7 @@ app.get("/api/subjects", (_req, res) => {
 });
 
 // ---- users / students ----
-app.get("/api/students", requireAuth, requireRole("admin"), (req, res) => {
+app.get("/api/students", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
   let rows;
   if (req.user.role === "super_admin") {
     rows = db.prepare("SELECT id, username, full_name, student_code, subjects, role, active, created_at FROM users WHERE role='student' ORDER BY id DESC").all();
@@ -111,7 +111,7 @@ app.get("/api/students", requireAuth, requireRole("admin"), (req, res) => {
   res.json(parsed);
 });
 
-app.get("/api/exams/template.xlsx", requireAuth, requireRole("admin"), async (_req, res) => {
+app.get("/api/exams/template.xlsx", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), async (_req, res) => {
   try {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Questions");
@@ -154,7 +154,7 @@ app.get("/api/exams", requireAuth, (req, res) => {
   res.json(rows.filter(e => adminSubs.includes(e.subject)));
 });
 
-app.post("/api/exams", requireAuth, requireRole("admin"), (req, res) => {
+app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
   const title = sanitize(req.body?.title);
   const subject = sanitize(req.body?.subject) || "General";
   const duration = Math.max(5, Math.min(180, Number(req.body?.duration_minutes) || 30));
@@ -191,7 +191,7 @@ app.get("/api/exams/:id", requireAuth, (req, res) => {
   res.json({ exam, questions: sanitized });
 });
 
-app.post("/api/exams/:id/questions", requireAuth, requireRole("admin"), (req, res) => {
+app.post("/api/exams/:id/questions", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
   const examId = Number(req.params.id);
   const exam = db.prepare("SELECT id FROM exams WHERE id=?").get(examId);
   if (!exam) return res.status(404).json({ error: "Exam not found" });
@@ -221,7 +221,7 @@ const upload = multer({
 });
 
 // Bulk import questions via Excel
-app.post("/api/exams/:id/questions/import", requireAuth, requireRole("admin"), upload.single("file"), async (req, res) => {
+app.post("/api/exams/:id/questions/import", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), upload.single("file"), async (req, res) => {
   const examId = Number(req.params.id);
   const exam = db.prepare("SELECT id FROM exams WHERE id=?").get(examId);
   if (!exam) return res.status(404).json({ error: "Exam not found" });
@@ -268,27 +268,33 @@ app.post("/api/exams/:id/questions/import", requireAuth, requireRole("admin"), u
 
 // ---- attempts ----
 app.post("/api/attempts/start", requireAuth, requireRole("student"), (req, res) => {
-  const examId = Number(req.body?.examId);
-  const cameraConsentAt = req.body?.cameraConsentAt ? Number(req.body.cameraConsentAt) : null;
-  const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(examId);
-  if (!exam) return res.status(404).json({ error: "Exam not found" });
-  // scheduling enforcement
-  const now = Date.now();
-  if (exam.scheduled_start && now < exam.scheduled_start) {
-    return res.status(400).json({ error: `Exam not yet available. Starts at ${new Date(exam.scheduled_start).toLocaleString()}` });
+  try {
+    const examId = Number(req.body?.examId);
+    const cameraConsentAt = req.body?.cameraConsentAt ? Number(req.body.cameraConsentAt) : null;
+    const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(examId);
+    if (!exam) return res.status(404).json({ error: "Exam not found" });
+    // scheduling enforcement
+    const now = Date.now();
+    if (exam.scheduled_start && now < exam.scheduled_start) {
+      return res.status(400).json({ error: `Exam not yet available. Starts at ${new Date(exam.scheduled_start).toLocaleString()}` });
+    }
+    if (exam.scheduled_end && now > exam.scheduled_end) {
+      return res.status(400).json({ error: `Exam has expired. Ended at ${new Date(exam.scheduled_end).toLocaleString()}` });
+    }
+    // allow concurrent same-account logins to have separate attempts if they explicitly want a new one
+    const existing = db.prepare("SELECT * FROM attempts WHERE exam_id=? AND user_id=? AND status='in_progress' ORDER BY started_at DESC LIMIT 1").get(examId, req.user.id);
+    if (existing && !req.body?.forceNew) return res.json({ attemptId: existing.id, endsAt: existing.ends_at, exam });
+    const qRow = db.prepare("SELECT COUNT(*) as n FROM questions WHERE exam_id=?").get(examId);
+    const qCount = qRow ? qRow.n : 0;
+    if (!qCount) return res.status(400).json({ error: "Exam has no questions" });
+    const endsAt = now + exam.duration_minutes * 60 * 1000;
+    const info = db.prepare("INSERT INTO attempts (exam_id, user_id, username, status, score, total, percent, passed, camera_consent_at, started_at, ends_at) VALUES (?, ?, ?, 'in_progress', 0, ?, 0, 0, ?, ?, ?)").run(examId, req.user.id, req.user.username, qCount, cameraConsentAt, now, endsAt);
+    const attemptId = Number(info.lastInsertRowid);
+    res.json({ attemptId, endsAt, exam });
+  } catch (e) {
+    console.error("[attempts/start]", e);
+    res.status(500).json({ error: e.message });
   }
-  if (exam.scheduled_end && now > exam.scheduled_end) {
-    return res.status(400).json({ error: `Exam has expired. Ended at ${new Date(exam.scheduled_end).toLocaleString()}` });
-  }
-  // allow concurrent same-account logins to have separate attempts if they explicitly want a new one
-  const existing = db.prepare("SELECT * FROM attempts WHERE exam_id=? AND user_id=? AND status='in_progress' ORDER BY started_at DESC LIMIT 1").get(examId, req.user.id);
-  if (existing && !req.body?.forceNew) return res.json({ attemptId: existing.id, endsAt: existing.ends_at, exam });
-  const qCount = db.prepare("SELECT COUNT(*) as n FROM questions WHERE exam_id=?").get(examId).n;
-  if (!qCount) return res.status(400).json({ error: "Exam has no questions" });
-  const endsAt = now + exam.duration_minutes * 60 * 1000;
-  const info = db.prepare("INSERT INTO attempts (exam_id, user_id, username, status, score, total, percent, passed, camera_consent_at, started_at, ends_at) VALUES (?, ?, ?, 'in_progress', 0, ?, 0, 0, ?, ?, ?)").run(examId, req.user.id, req.user.username, qCount, cameraConsentAt, now, endsAt);
-  const attemptId = Number(info.lastInsertRowid);
-  res.json({ attemptId, endsAt, exam });
 });
 
 app.post("/api/attempts/:id/answer", requireAuth, (req, res) => {
@@ -384,7 +390,7 @@ app.get("/api/results", requireAuth, (req, res) => {
   res.json(rows);
 });
 
-app.get("/api/results/combined", requireAuth, requireRole("admin"), (req, res) => {
+app.get("/api/results/combined", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
   const ids = String(req.query.examIds||"").split(",").map(s=>Number(s)).filter(Boolean);
   if (!ids.length) return res.json({ exams: [], stats: { total:0, avgPercent:0, passRate:0 }});
   const placeholders = ids.map(()=>"?").join(",");
@@ -496,7 +502,7 @@ app.delete("/api/admin/users/:id", requireAuth, requireRole("super_admin"), (req
 });
 
 // ---- dashboard stats (subject-scoped) ----
-app.get("/api/dashboard/stats", requireAuth, requireRole("admin"), (req, res) => {
+app.get("/api/dashboard/stats", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
   const examRows = db.prepare("SELECT * FROM exams ORDER BY id DESC").all();
   const adminSubs = req.user.admin_subjects || [];
   const scopedExams = adminSubs.length ? examRows.filter(e => adminSubs.includes(e.subject)) : examRows;
