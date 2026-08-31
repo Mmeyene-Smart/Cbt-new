@@ -4,12 +4,13 @@ import { getUser, setSession, clearSession, api, getToken, apiUrl } from "./lib/
 import { getSocket, destroySocket } from "./lib/socket.js";
 import useCamera from "./hooks/useCamera.js";
 import useScreenShare from "./hooks/useScreenShare.js";
-import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, Monitor, AlertTriangle, Sun, Moon } from "lucide-react";
+import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, Monitor, AlertTriangle, Sun, Moon, Shield, FileText } from "lucide-react";
 
 export default function App(){
   const [user,setUser]=useState(getUser());
   if(!user) return <AuthScreen onAuth={(t,u)=>{setSession(t,u); setUser(u);}} />;
-  return user.role==="admin" ? <AdminShell user={user} onLogout={doLogout(setUser)} /> : <StudentShell user={user} onLogout={doLogout(setUser)} />;
+  const isAdmin = ["super_admin","subject_admin","examiner"].includes(user.role);
+  return isAdmin ? <AdminShell user={user} onLogout={doLogout(setUser)} /> : <StudentShell user={user} onLogout={doLogout(setUser)} />;
 }
 function doLogout(setUser){ return ()=>{ destroySocket(); clearSession(); setUser(null); } }
 
@@ -17,6 +18,13 @@ function doLogout(setUser){ return ()=>{ destroySocket(); clearSession(); setUse
 function AdminShell({user,onLogout}){
   const [tab,setTab]=useState("dashboard");
   const [theme,setTheme]=useState(()=> localStorage.getItem("cbt.theme") || "light");
+  const isAdmin = ["super_admin","subject_admin"].includes(user.role);
+  const isSuperAdmin = user.role === "super_admin";
+  const allTabs = ["dashboard","exams","students","results","proctor","admins","audit"];
+  const tabs = allTabs.filter(t => {
+    if (t === "admins" || t === "audit") return isSuperAdmin;
+    return true;
+  });
   useEffect(()=>{
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("cbt.theme", theme);
@@ -27,10 +35,11 @@ function AdminShell({user,onLogout}){
         <span className="font-display font-bold text-gradient">University Examination Administration</span>
         <div className="flex items-center gap-3">
           <nav className="hidden md:flex gap-2 text-sm">
-            {["dashboard","exams","students","results","proctor"].map(t=>(
+            {tabs.map(t=>(
               <button key={t} onClick={()=>setTab(t)} className={`px-3 py-1.5 rounded-lg capitalize ${tab===t?"bg-white/10 text-white":"text-zinc-400 hover:text-white"}`}>{t}</button>
             ))}
           </nav>
+          <span className="text-xs rounded-full bg-white/10 px-2 py-0.5 text-zinc-400 capitalize">{user.role?.replace("_"," ")}</span>
           <span className="text-sm text-zinc-400">{user.username}</span>
           <button onClick={()=>setTheme(theme==="light"?"dark":"light")} aria-label="Toggle theme" title={`Switch to ${theme==="light"?"dark":"light"} mode`} className="p-2 rounded-lg hover:bg-white/10">
             {theme==="light" ? <Moon className="h-4 w-4"/> : <Sun className="h-4 w-4"/>}
@@ -39,42 +48,50 @@ function AdminShell({user,onLogout}){
         </div>
       </header>
       <div className="md:hidden flex gap-2 p-3 border-b border-white/5 overflow-auto">
-        {["dashboard","exams","students","results","proctor"].map(t=>(
+        {tabs.map(t=>(
           <button key={t} onClick={()=>setTab(t)} className={`px-3 py-1.5 rounded-lg text-sm capitalize shrink-0 ${tab===t?"bg-white/10 text-white":"text-zinc-400"}`}>{t}</button>
         ))}
       </div>
       <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
-        {tab==="dashboard" && <AdminDashboard/>}
-        {tab==="exams" && <ExamsAdmin/>}
-        {tab==="students" && <StudentsAdmin/>}
-        {tab==="results" && <ResultsAdmin/>}
+        {tab==="dashboard" && <AdminDashboard user={user}/>}
+        {tab==="exams" && <ExamsAdmin user={user}/>}
+        {tab==="students" && <StudentsAdmin user={user}/>}
+        {tab==="results" && <ResultsAdmin user={user}/>}
         {tab==="proctor" && <ProctorWall/>}
+        {tab==="admins" && isSuperAdmin && <AdminsAdmin user={user}/>}
+        {tab==="audit" && isSuperAdmin && <AuditLog/>}
       </main>
     </div>
   );
 }
 
-function AdminDashboard(){
+function AdminDashboard({user}){
   const [stats,setStats]=useState(null);
   useEffect(()=>{
-    Promise.all([api("/api/students"), api("/api/exams"), api("/api/results")]).then(([students,exams,results])=>{
-      setStats({students:students.length, exams:exams.length, attempts:results.length});
-    }).catch(()=>{});
+    api("/api/dashboard/stats").then(setStats).catch(()=>{});
   },[]);
   if(!stats) return <p className="text-zinc-500">Loading…</p>;
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {[
-        ["Students", stats.students, Users],
-        ["Exams", stats.exams, BookOpen],
-        ["Attempts", stats.attempts, BarChart3],
-      ].map(([label,val,Icon])=>(
-        <div key={label} className="glass rounded-2xl p-6">
-          <div className="flex items-center justify-between"><p className="text-xs uppercase tracking-wider text-zinc-500">{label}</p><Icon className="h-5 w-5 text-zinc-500"/></div>
-          <p className="mt-2 font-display text-3xl font-bold">{val}</p>
-        </div>
-      ))}
-      <div className="md:col-span-3 glass rounded-2xl p-6">
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {[
+          ["Exams", stats.totalExams, BookOpen],
+          ["Students", stats.totalStudents, Users],
+          ["Attempts", stats.totalAttempts, BarChart3],
+          ["Pass Rate", `${stats.passRate}%`, CheckCircle],
+        ].map(([label,val,Icon])=>(
+          <div key={label} className="glass rounded-2xl p-6">
+            <div className="flex items-center justify-between"><p className="text-xs uppercase tracking-wider text-zinc-500">{label}</p><Icon className="h-5 w-5 text-zinc-500"/></div>
+            <p className="mt-2 font-display text-3xl font-bold">{val}</p>
+          </div>
+        ))}
+      </div>
+      <div className="glass rounded-2xl p-4">
+        <p className="text-xs text-zinc-500">Average score: <span className="text-white font-semibold">{stats.avgPercent}%</span></p>
+        <p className="text-xs text-zinc-500 mt-1">Subjects: {stats.subjects?.join(", ") || "—"}</p>
+        {user.admin_subjects?.length > 0 && <p className="text-xs text-zinc-400 mt-2">Showing stats for your assigned subjects only.</p>}
+      </div>
+      <div className="glass rounded-2xl p-6">
         <h3 className="font-semibold">Examination Management Guide</h3>
         <ul className="mt-2 text-sm text-zinc-400 list-disc pl-5 space-y-1">
           <li>Navigate to <b>Examinations</b> to create a new course examination and add questions via manual entry or Excel bulk import</li>
@@ -86,17 +103,22 @@ function AdminDashboard(){
   );
 }
 
-function ExamsAdmin(){
+function ExamsAdmin({user}){
   const [exams,setExams]=useState([]);
   const [title,setTitle]=useState(""); const [subject,setSubject]=useState("General"); const [duration,setDuration]=useState(15);
+  const [schedStart,setSchedStart]=useState(""); const [schedEnd,setSchedEnd]=useState(""); const [randomize,setRandomize]=useState(false);
   const [selected,setSelected]=useState(null); const [qs,setQs]=useState([]);
   const [qPrompt,setQPrompt]=useState(""); const [qOptions,setQOptions]=useState("A,B,C,D"); const [qAnswer,setQAnswer]=useState("A"); const [qType,setQType]=useState("mcq");
+  const [qDifficulty,setQDifficulty]=useState(""); const [qTopic,setQTopic]=useState("");
   const load=useCallback(()=> api("/api/exams").then(setExams),[]);
   useEffect(()=>{load();},[load]);
   const create=async(e)=>{
     e.preventDefault();
-    await api("/api/exams",{method:"POST", body:{title, subject, duration_minutes:Number(duration)}});
-    setTitle(""); load();
+    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize};
+    if(schedStart) body.scheduled_start = new Date(schedStart).getTime();
+    if(schedEnd) body.scheduled_end = new Date(schedEnd).getTime();
+    await api("/api/exams",{method:"POST", body});
+    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); load();
   };
   const openExam=async(id)=>{
     const data=await api(`/api/exams/${id}`);
@@ -106,9 +128,12 @@ function ExamsAdmin(){
   const addQ=async()=>{
     const opts = qOptions.split(",").map(s=>s.trim()).filter(Boolean);
     const ans = qAnswer.split(",").map(s=>s.trim()).filter(Boolean);
-    await api(`/api/exams/${selected.id}/questions`,{method:"POST", body:{type:qType, prompt:qPrompt, options:opts, answer:ans}});
+    const body = {type:qType, prompt:qPrompt, options:opts, answer:ans};
+    if(qDifficulty) body.difficulty = qDifficulty;
+    if(qTopic) body.topic = qTopic;
+    await api(`/api/exams/${selected.id}/questions`,{method:"POST", body});
     const data=await api(`/api/exams/${selected.id}`);
-    setQs(data.questions); setQPrompt("");
+    setQs(data.questions); setQPrompt(""); setQDifficulty(""); setQTopic("");
   };
   return (
     <div className="grid lg:grid-cols-2 gap-6">
@@ -120,17 +145,43 @@ function ExamsAdmin(){
             <input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="Subject" className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
             <input type="number" value={duration} onChange={e=>setDuration(e.target.value)} placeholder="Minutes" className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-zinc-500 mb-1 block">Start (optional)</label>
+              <input type="datetime-local" value={schedStart} onChange={e=>setSchedStart(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+            </div>
+            <div>
+              <label className="text-xs text-zinc-500 mb-1 block">End (optional)</label>
+              <input type="datetime-local" value={schedEnd} onChange={e=>setSchedEnd(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-zinc-400">
+            <input type="checkbox" checked={randomize} onChange={e=>setRandomize(e.target.checked)} className="accent-[var(--a1)]"/>
+            Randomize question order for each student
+          </label>
           <button className="grad-bg w-full rounded-xl py-2 font-semibold text-night">Create</button>
         </form>
         <div className="glass rounded-2xl p-4">
           <h4 className="font-semibold mb-3 text-sm">Exams</h4>
           <ul className="space-y-2">
-            {exams.map(e=>(
-              <li key={e.id} className={`flex items-center justify-between rounded-xl px-3 py-2 ${selected?.id===e.id?"bg-white/10":"hover:bg-white/5"}`}>
-                <div><p className="text-sm font-medium">{e.title}</p><p className="text-xs text-zinc-500">{e.subject} · {e.duration_minutes}m · {e.question_count} Qs</p></div>
-                <button onClick={()=>openExam(e.id)} className="p-2 hover:bg-white/10 rounded-lg"><Eye className="h-4 w-4"/></button>
-              </li>
-            ))}
+            {exams.map(e=>{
+              const now = Date.now();
+              let schedLabel = "";
+              if(e.scheduled_start && now < e.scheduled_start) schedLabel = `Starts ${new Date(e.scheduled_start).toLocaleDateString()}`;
+              else if(e.scheduled_end && now > e.scheduled_end) schedLabel = "Ended";
+              else if(e.scheduled_start || e.scheduled_end) schedLabel = "Available";
+              return (
+                <li key={e.id} className={`flex items-center justify-between rounded-xl px-3 py-2 ${selected?.id===e.id?"bg-white/10":"hover:bg-white/5"}`}>
+                  <div><p className="text-sm font-medium">{e.title}</p>
+                    <p className="text-xs text-zinc-500">{e.subject} · {e.duration_minutes}m · {e.question_count} Qs
+                      {e.randomize_questions ? <span className="ml-1 text-violet-400">🔀</span> : null}
+                      {schedLabel && <span className={`ml-1 ${e.scheduled_end && now > e.scheduled_end ? "text-rose-400" : "text-emerald-400"}`}>· {schedLabel}</span>}
+                    </p>
+                  </div>
+                  <button onClick={()=>openExam(e.id)} className="p-2 hover:bg-white/10 rounded-lg"><Eye className="h-4 w-4"/></button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       </div>
@@ -142,7 +193,10 @@ function ExamsAdmin(){
             <ul className="space-y-2 mb-4 max-h-64 overflow-auto pr-1">
               {qs.map((q,i)=>(
                 <li key={q.id} className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
-                  <p className="text-sm"><span className="text-zinc-500">{i+1}.</span> {q.prompt} <span className="text-xs text-zinc-500">[{q.type}]</span></p>
+                  <p className="text-sm"><span className="text-zinc-500">{i+1}.</span> {q.prompt} <span className="text-xs text-zinc-500">[{q.type}]</span>
+                    {q.difficulty && <span className={`ml-1 text-xs px-1.5 py-0.5 rounded ${q.difficulty==="easy"?"bg-emerald-500/20 text-emerald-400":q.difficulty==="hard"?"bg-rose-500/20 text-rose-400":"bg-amber-500/20 text-amber-400"}`}>{q.difficulty}</span>}
+                    {q.topic && <span className="ml-1 text-xs text-zinc-600">#{q.topic}</span>}
+                  </p>
                   <p className="text-xs text-zinc-500 mt-1">Options: {(Array.isArray(q.options) ? q.options : JSON.parse(q.options)).join(", ")} · Answer: {(Array.isArray(q.answer) ? q.answer : JSON.parse(q.answer)).join(", ")}</p>
                 </li>
               ))}
@@ -187,6 +241,12 @@ function ExamsAdmin(){
               <select value={qType} onChange={e=>setQType(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm">
                 <option value="mcq">MCQ (single)</option><option value="multi">Multi-select</option><option value="tf">True/False</option>
               </select>
+              <div className="grid grid-cols-2 gap-2">
+                <select value={qDifficulty} onChange={e=>setQDifficulty(e.target.value)} className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm">
+                  <option value="">Difficulty</option><option value="easy">Easy</option><option value="medium">Medium</option><option value="hard">Hard</option>
+                </select>
+                <input value={qTopic} onChange={e=>setQTopic(e.target.value)} placeholder="Topic (optional)" className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+              </div>
               <input value={qPrompt} onChange={e=>setQPrompt(e.target.value)} placeholder="Question prompt" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
               <input value={qOptions} onChange={e=>setQOptions(e.target.value)} placeholder="Options comma-separated" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
               <input value={qAnswer} onChange={e=>setQAnswer(e.target.value)} placeholder="Answer(s) comma-separated (exact option text)" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
@@ -199,7 +259,7 @@ function ExamsAdmin(){
   );
 }
 
-function StudentsAdmin(){
+function StudentsAdmin({user}){
   const [students,setStudents]=useState([]);
   useEffect(()=>{ api("/api/students").then(setStudents).catch(()=>{}); },[]);
   return (
@@ -217,7 +277,7 @@ function StudentsAdmin(){
   );
 }
 
-function ResultsAdmin(){
+function ResultsAdmin({user}){
   const [exams,setExams]=useState([]); const [selected,setSelected]=useState(""); const [rows,setRows]=useState([]); const [combined,setCombined]=useState(null);
   useEffect(()=>{ api("/api/exams").then(setExams); api("/api/results").then(setRows); },[]);
   const loadExam = async(id)=>{
@@ -276,6 +336,133 @@ function ProctorImage({ url, alt }) {
   }, [url]);
   if (!src) return <div className="w-full aspect-[4/3] bg-black/40 animate-pulse" />;
   return <img src={src} alt={alt} className="w-full aspect-[4/3] object-cover bg-black/40" />;
+}
+
+// ===== Admins Management (super_admin only) =====
+function AdminsAdmin({user}){
+  const [admins,setAdmins]=useState([]); const [subjectOptions,setSubjectOptions]=useState([]);
+  const [newUser,setNewUser]=useState(""); const [newPass,setNewPass]=useState(""); const [newRole,setNewRole]=useState("subject_admin"); const [newSubjects,setNewSubjects]=useState([]); const [newName,setNewName]=useState("");
+  const [editId,setEditId]=useState(null); const [editRole,setEditRole]=useState(""); const [editSubjects,setEditSubjects]=useState([]);
+  const load=useCallback(()=>{
+    api("/api/admin/users").then(setAdmins).catch(()=>{});
+    api("/api/subjects").then(d=> setSubjectOptions(Array.isArray(d)?d:[])).catch(()=>{});
+  },[]);
+  useEffect(()=>{load();},[load]);
+  const createAdmin=async()=>{
+    if(!newUser||!newPass) return alert("Username and password required");
+    try{
+      await api("/api/admin/users",{method:"POST",body:{username:newUser,password:newPass,role:newRole,full_name:newName,subjects:newSubjects}});
+      setNewUser(""); setNewPass(""); setNewName(""); setNewSubjects([]); load();
+    }catch(e){alert(e.message);}
+  };
+  const toggleNewSubject=(s)=> setNewSubjects(p=>p.includes(s)?p.filter(x=>x!==s):[...p,s]);
+  const toggleEditSubject=(s)=> setEditSubjects(p=>p.includes(s)?p.filter(x=>x!==s):[...p,s]);
+  const saveEdit=async()=>{
+    try{
+      await api(`/api/admin/users/${editId}`,{method:"PUT",body:{role:editRole,subjects:editSubjects}});
+      setEditId(null); load();
+    }catch(e){alert(e.message);}
+  };
+  const deactivate=async(id)=>{
+    if(!confirm("Deactivate this admin?")) return;
+    try{ await api(`/api/admin/users/${id}`,{method:"DELETE"}); load(); }catch(e){alert(e.message);}
+  };
+  return (
+    <div className="space-y-4">
+      <div className="glass rounded-2xl p-5">
+        <h3 className="font-semibold flex items-center gap-2"><Shield className="h-4 w-4"/> Add Admin / Examiner</h3>
+        <div className="mt-3 space-y-2">
+          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Full name" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          <input value={newUser} onChange={e=>setNewUser(e.target.value)} placeholder="Username" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          <input value={newPass} onChange={e=>setNewPass(e.target.value)} type="password" placeholder="Password (8+ chars, upper+lower+number)" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          <select value={newRole} onChange={e=>setNewRole(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm">
+            <option value="subject_admin">Subject Admin</option><option value="examiner">Examiner</option><option value="super_admin">Super Admin</option>
+          </select>
+          <div className="grid grid-cols-2 gap-1.5 max-h-24 overflow-auto">
+            {subjectOptions.map(s=>(
+              <label key={s} className={`flex items-center gap-2 rounded-lg px-2 py-1 text-xs cursor-pointer ${newSubjects.includes(s)?"bg-[var(--a1)]/20 text-white":"bg-white/5 text-zinc-400"}`}>
+                <input type="checkbox" checked={newSubjects.includes(s)} onChange={()=>toggleNewSubject(s)} className="accent-[var(--a1)] h-3 w-3"/> {s}
+              </label>
+            ))}
+          </div>
+          <button onClick={createAdmin} className="grad-bg w-full rounded-xl py-2 font-semibold text-night text-sm">Create Account</button>
+        </div>
+      </div>
+      <div className="glass rounded-2xl p-5">
+        <h3 className="font-semibold mb-3 text-sm">Existing Admins ({admins.length})</h3>
+        <ul className="space-y-2">
+          {admins.map(a=>(
+            <li key={a.id} className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+              {editId===a.id ? (
+                <div className="space-y-2">
+                  <select value={editRole} onChange={e=>setEditRole(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm">
+                    <option value="subject_admin">Subject Admin</option><option value="examiner">Examiner</option><option value="super_admin">Super Admin</option>
+                  </select>
+                  <div className="grid grid-cols-2 gap-1.5 max-h-20 overflow-auto">
+                    {subjectOptions.map(s=>(
+                      <label key={s} className={`flex items-center gap-2 rounded-lg px-2 py-1 text-xs cursor-pointer ${editSubjects.includes(s)?"bg-[var(--a1)]/20 text-white":"bg-white/5 text-zinc-400"}`}>
+                        <input type="checkbox" checked={editSubjects.includes(s)} onChange={()=>toggleEditSubject(s)} className="accent-[var(--a1)] h-3 w-3"/> {s}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={saveEdit} className="flex-1 rounded-xl bg-emerald-500 py-1.5 text-xs font-semibold text-white">Save</button>
+                    <button onClick={()=>setEditId(null)} className="flex-1 rounded-xl border border-white/10 bg-white/5 py-1.5 text-xs">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">{a.username} <span className="text-xs text-zinc-500 capitalize">({a.role?.replace("_"," ")})</span></p>
+                    <p className="text-xs text-zinc-500">{a.admin_subjects?.length ? a.admin_subjects.join(", ") : "All subjects"}</p>
+                  </div>
+                  <div className="flex gap-1">
+                    <button onClick={()=>{setEditId(a.id);setEditRole(a.role);setEditSubjects(a.admin_subjects||[]);}} className="p-1.5 hover:bg-white/10 rounded-lg text-xs">Edit</button>
+                    <button onClick={()=>deactivate(a.id)} className="p-1.5 hover:bg-rose-500/20 rounded-lg text-xs text-rose-400">Deactivate</button>
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+// ===== Audit Log (super_admin only) =====
+function AuditLog(){
+  const [rows,setRows]=useState([]); const [page,setPage]=useState(1); const [total,setTotal]=useState(0);
+  useEffect(()=>{
+    api(`/api/audit?page=${page}&limit=30`).then(d=>{setRows(d.rows||[]);setTotal(d.total||0);}).catch(()=>{});
+  },[page]);
+  const pages = Math.max(1, Math.ceil(total/30));
+  return (
+    <div className="glass rounded-2xl p-5">
+      <h3 className="font-semibold flex items-center gap-2 mb-4"><FileText className="h-4 w-4"/> Audit Log ({total} entries)</h3>
+      <div className="overflow-auto">
+        <table className="w-full text-sm">
+          <thead className="text-xs text-zinc-500"><tr><th className="text-left p-2">Time</th><th className="text-left p-2">User</th><th className="text-left p-2">Action</th><th className="text-left p-2">Target</th></tr></thead>
+          <tbody>{rows.map(r=>(
+            <tr key={r.id} className="border-t border-white/5">
+              <td className="p-2 text-xs text-zinc-500">{new Date(r.created_at).toLocaleString()}</td>
+              <td className="p-2">{r.username} <span className="text-xs text-zinc-600">({r.role})</span></td>
+              <td className="p-2 text-xs">{r.action}</td>
+              <td className="p-2 text-xs text-zinc-500">{r.target_type}{r.target_id ? `#${r.target_id}` : ""}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {!rows.length && <p className="text-center text-sm text-zinc-600 py-6">No audit entries yet.</p>}
+      </div>
+      {pages > 1 && (
+        <div className="flex justify-center gap-2 mt-4">
+          <button disabled={page<=1} onClick={()=>setPage(p=>p-1)} className="rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-xs disabled:opacity-40">Prev</button>
+          <span className="text-xs text-zinc-500 py-1">Page {page}/{pages}</span>
+          <button disabled={page>=pages} onClick={()=>setPage(p=>p+1)} className="rounded-lg border border-white/10 bg-white/5 px-3 py-1 text-xs disabled:opacity-40">Next</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ProctorWall(){
@@ -384,6 +571,8 @@ function ExamPlayer({exam, user, onBack}){
   const [cameraConsent,setCameraConsent]=useState(false);
   const [screenConsent,setScreenConsent]=useState(false);
   const [started,setStarted]=useState(false);
+  const [tabViolations,setTabViolations]=useState(0);
+  const [tabWarning,setTabWarning]=useState(false);
   const camera = useCamera(started && exam.camera_required);
   const screen = useScreenShare();
   const socketRef = useRef(null);
@@ -404,6 +593,26 @@ function ExamPlayer({exam, user, onBack}){
   useEffect(()=>{
     if(endsAt && now >= endsAt && attempt && !result) doSubmit();
   },[now, endsAt]);
+
+  // tab-switch detection
+  useEffect(()=>{
+    if(!started || !attempt) return;
+    const onVisChange=()=>{
+      if(document.hidden){
+        setTabViolations(v=>{
+          const next=v+1;
+          // report to server
+          api(`/api/attempts/${attempt.attemptId}/tab-violation`,{method:"POST"}).then(d=>{
+            if(d.autoSubmitted && d.graded){ setResult(d.graded); camera.stop(); screen.stop(); }
+          }).catch(()=>{});
+          return next;
+        });
+        setTabWarning(true);
+      }
+    };
+    document.addEventListener("visibilitychange",onVisChange);
+    return ()=>document.removeEventListener("visibilitychange",onVisChange);
+  },[started, attempt]);
 
   // live camera + screen snapshot loops
   useEffect(()=>{
@@ -547,6 +756,12 @@ function ExamPlayer({exam, user, onBack}){
   return (
     <div className="grid lg:grid-cols-[1fr_280px] gap-6">
       <div className="glass rounded-2xl p-5">
+        {tabViolations > 0 && (
+          <div className={`mb-4 rounded-xl border p-3 text-sm ${tabViolations >= 5 ? "border-rose-500/40 bg-rose-500/10 text-rose-300" : "border-amber-500/30 bg-amber-500/10 text-amber-300"}`}>
+            <p className="font-medium">Tab switch detected! ({tabViolations}/5 violations)</p>
+            <p className="text-xs mt-1">Switching tabs is monitored. At 5 violations your exam will be auto-submitted.</p>
+          </div>
+        )}
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-medium">Question {idx+1} / {questions.length}</span>
           <span className={`font-mono text-sm px-3 py-1 rounded-full ${remaining<60?"bg-rose-500/20 text-rose-300":"bg-white/5 text-zinc-300"}`}><Clock className="inline h-3 w-3 mr-1"/>{String(mins).padStart(2,"0")}:{String(secs).padStart(2,"0")}</span>
