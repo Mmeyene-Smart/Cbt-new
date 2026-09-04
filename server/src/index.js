@@ -163,10 +163,11 @@ app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", 
   const scheduledStart = req.body?.scheduled_start ? Number(req.body.scheduled_start) : null;
   const scheduledEnd = req.body?.scheduled_end ? Number(req.body.scheduled_end) : null;
   const randomizeQuestions = req.body?.randomize_questions ? 1 : 0;
+  const negativeMarks = Math.max(0, Math.min(1, Number(req.body?.negative_marks) || 0));
   if (!title || title.length < 3 || title.length > 120) return res.status(400).json({ error: "Title must be 3-120 characters" });
   if (/[<>]/.test(title) || /[<>]/.test(subject)) return res.status(400).json({ error: "Invalid characters in title/subject" });
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
-  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, scheduled_start, scheduled_end, randomize_questions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, req.user.id, scheduledStart, scheduledEnd, randomizeQuestions, Date.now());
+  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, req.user.id, negativeMarks, scheduledStart, scheduledEnd, randomizeQuestions, Date.now());
   const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(info.lastInsertRowid));
   res.json(exam);
 });
@@ -174,12 +175,13 @@ app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", 
 app.get("/api/exams/:id", requireAuth, (req, res) => {
   const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(req.params.id));
   if (!exam) return res.status(404).json({ error: "Exam not found" });
-  const questions = db.prepare("SELECT id, exam_id, type, prompt, options, answer, marks, difficulty, topic, order_index FROM questions WHERE exam_id=? ORDER BY order_index").all(exam.id);
+  const questions = db.prepare("SELECT id, exam_id, type, prompt, options, answer, marks, difficulty, topic, explanation, order_index FROM questions WHERE exam_id=? ORDER BY order_index").all(exam.id);
   const isStudent = req.user.role === "student";
   let sanitized = questions.map(q => ({
     ...q,
     options: JSON.parse(q.options),
     answer: isStudent ? undefined : JSON.parse(q.answer),
+    explanation: isStudent ? undefined : q.explanation,
   }));
   // randomize question order for students if exam has randomize_questions enabled
   if (isStudent && exam.randomize_questions) {
@@ -195,7 +197,7 @@ app.post("/api/exams/:id/questions", requireAuth, requireRole("super_admin", "su
   const examId = Number(req.params.id);
   const exam = db.prepare("SELECT id FROM exams WHERE id=?").get(examId);
   if (!exam) return res.status(404).json({ error: "Exam not found" });
-  let { type, prompt, options, answer, marks, difficulty, topic } = req.body ?? {};
+  let { type, prompt, options, answer, marks, difficulty, topic, explanation } = req.body ?? {};
   prompt = sanitize(prompt);
   if (!prompt || prompt.length > 1000) return res.status(400).json({ error: "Prompt required (1-1000 chars)" });
   if (!Array.isArray(options) || !Array.isArray(answer)) return res.status(400).json({ error: "prompt, options[], answer[] required" });
@@ -206,8 +208,9 @@ app.post("/api/exams/:id/questions", requireAuth, requireRole("super_admin", "su
   if (!["mcq","multi","tf"].includes(type)) return res.status(400).json({ error: "Invalid type" });
   const difficultyVal = ["easy","medium","hard"].includes(difficulty) ? difficulty : null;
   const topicVal = topic ? sanitize(topic).slice(0, 100) : null;
+  const explanationVal = explanation ? sanitize(explanation).slice(0, 2000) : null;
   const order = db.prepare("SELECT COUNT(*) as n FROM questions WHERE exam_id=?").get(examId).n;
-  const info = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, difficulty, topic, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(examId, type, prompt, JSON.stringify(options), JSON.stringify(answer), Number(marks)||1, difficultyVal, topicVal, order);
+  const info = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, difficulty, topic, explanation, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(examId, type, prompt, JSON.stringify(options), JSON.stringify(answer), Number(marks)||1, difficultyVal, topicVal, explanationVal, order);
   res.json(db.prepare("SELECT * FROM questions WHERE id=?").get(Number(info.lastInsertRowid)));
 });
 
@@ -318,34 +321,194 @@ app.post("/api/attempts/:id/answer", requireAuth, (req, res) => {
 
 function gradeAttempt(attemptId) {
   const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(attemptId);
+  const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(attempt.exam_id);
   const questions = db.prepare("SELECT * FROM questions WHERE exam_id=?").all(attempt.exam_id);
+  const negativeMarks = exam?.negative_marks || 0;
   let score = 0;
   for (const q of questions) {
     const ans = db.prepare("SELECT given FROM attempt_answers WHERE attempt_id=? AND question_id=?").get(attemptId, q.id);
     const given = ans ? JSON.parse(ans.given) : null;
     const correct = JSON.parse(q.answer);
     let isCorrect = false;
-    if (q.type === "mcq" || q.type === "tf") isCorrect = Array.isArray(given) && given.length===1 && given[0]===correct[0];
-    else if (q.type==="multi") isCorrect = Array.isArray(given) && given.length===correct.length && given.every(v=>correct.includes(v)) && correct.every(v=>given.includes(v));
-    const marks = isCorrect ? q.marks : 0;
+    let partialCredit = 0;
+    if (q.type === "mcq" || q.type === "tf") {
+      isCorrect = Array.isArray(given) && given.length === 1 && given[0] === correct[0];
+    } else if (q.type === "multi") {
+      if (Array.isArray(given) && given.length > 0) {
+        const correctSet = new Set(correct);
+        const givenSet = new Set(given);
+        const correctChosen = [...givenSet].filter(v => correctSet.has(v)).length;
+        const wrongChosen = [...givenSet].filter(v => !correctSet.has(v)).length;
+        if (wrongChosen === 0 && correctChosen === correct.length) {
+          isCorrect = true;
+        } else if (correctChosen > 0) {
+          partialCredit = (correctChosen / correct.length) - (wrongChosen / correct.length);
+          partialCredit = Math.max(0, partialCredit);
+        }
+      }
+    }
+    let marks = 0;
+    if (isCorrect) {
+      marks = q.marks;
+    } else if (partialCredit > 0) {
+      marks = q.marks * partialCredit;
+    } else if (given && given.length > 0) {
+      marks = -(q.marks * negativeMarks);
+    }
     score += marks;
-    if (ans) db.prepare("UPDATE attempt_answers SET is_correct=?, marks_awarded=? WHERE attempt_id=? AND question_id=?").run(isCorrect?1:0, marks, attemptId, q.id);
+    if (ans) db.prepare("UPDATE attempt_answers SET is_correct=?, marks_awarded=? WHERE attempt_id=? AND question_id=?").run(isCorrect ? 1 : 0, Math.round(marks * 100) / 100, attemptId, q.id);
   }
-  const total = questions.reduce((s,q)=>s+q.marks,0);
-  const percent = total ? (score/total)*100 : 0;
-  const passed = percent >= attempt.percent ? 0 : 0; // placeholder, use exam pass_percent
-  const exam = db.prepare("SELECT pass_percent FROM exams WHERE id=?").get(attempt.exam_id);
+  const total = questions.reduce((s, q) => s + q.marks, 0);
+  const maxPossible = total;
+  const percent = maxPossible ? Math.max(0, (score / maxPossible) * 100) : 0;
   const isPassed = percent >= (exam?.pass_percent ?? 50) ? 1 : 0;
-  db.prepare("UPDATE attempts SET status='graded', score=?, total=?, percent=?, passed=?, submitted_at=? WHERE id=?").run(score, total, percent, isPassed, Date.now(), attemptId);
+  db.prepare("UPDATE attempts SET status='graded', score=?, total=?, percent=?, passed=?, submitted_at=? WHERE id=?").run(Math.round(score * 100) / 100, total, Math.round(percent * 10) / 10, isPassed, Date.now(), attemptId);
   return db.prepare("SELECT * FROM attempts WHERE id=?").get(attemptId);
+}
+
+function getDetailedResults(attemptId) {
+  const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(attemptId);
+  const questions = db.prepare("SELECT * FROM questions WHERE exam_id=?").all(attempt.exam_id);
+  const answers = db.prepare("SELECT * FROM attempt_answers WHERE attempt_id=?").all(attemptId);
+  const answerMap = {};
+  answers.forEach(a => { answerMap[a.question_id] = a; });
+  const detailed = questions.map(q => {
+    const ans = answerMap[q.id];
+    const given = ans ? JSON.parse(ans.given) : [];
+    const correct = JSON.parse(q.answer);
+    return {
+      id: q.id,
+      type: q.type,
+      prompt: q.prompt,
+      options: JSON.parse(q.options),
+      correct,
+      given,
+      is_correct: ans?.is_correct === 1,
+      marks_awarded: ans?.marks_awarded || 0,
+      marks_total: q.marks,
+      explanation: q.explanation || null,
+      difficulty: q.difficulty,
+      topic: q.topic,
+    };
+  });
+  return { attempt, questions: detailed };
 }
 
 app.post("/api/attempts/:id/submit", requireAuth, (req, res) => {
   const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.id));
   if (!attempt || attempt.user_id !== req.user.id) return res.status(404).json({ error: "Attempt not found" });
-  if (attempt.status !== "in_progress") return res.json(attempt);
-  const graded = gradeAttempt(attempt.id);
-  res.json(graded);
+  if (attempt.status !== "in_progress") {
+    const existing = getDetailedResults(attempt.id);
+    return res.json(existing);
+  }
+  gradeAttempt(attempt.id);
+  const detailed = getDetailedResults(attempt.id);
+  res.json(detailed);
+});
+
+// fetch saved answers for an attempt (for auto-save resume)
+app.get("/api/attempts/:id/answers", requireAuth, (req, res) => {
+  const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.id));
+  if (!attempt || attempt.user_id !== req.user.id) return res.status(404).json({ error: "Attempt not found" });
+  const rows = db.prepare("SELECT question_id, given FROM attempt_answers WHERE attempt_id=?").all(attempt.id);
+  const answers = {};
+  rows.forEach(r => { try { answers[r.question_id] = JSON.parse(r.given); } catch {} });
+  res.json({ answers, endsAt: attempt.ends_at });
+});
+
+// flag / unflag a question
+app.post("/api/attempts/:id/flag/:questionId", requireAuth, (req, res) => {
+  const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.id));
+  if (!attempt || attempt.user_id !== req.user.id) return res.status(404).json({ error: "Attempt not found" });
+  const qid = Number(req.params.questionId);
+  const q = db.prepare("SELECT id FROM questions WHERE id=? AND exam_id=?").get(qid, attempt.exam_id);
+  if (!q) return res.status(404).json({ error: "Question not found" });
+  try {
+    db.prepare("INSERT OR IGNORE INTO flagged_questions (attempt_id, question_id, flagged_at) VALUES (?, ?, ?)").run(attempt.id, qid, Date.now());
+  } catch {}
+  res.json({ ok: true, flagged: true });
+});
+app.delete("/api/attempts/:id/flag/:questionId", requireAuth, (req, res) => {
+  const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.id));
+  if (!attempt || attempt.user_id !== req.user.id) return res.status(404).json({ error: "Attempt not found" });
+  const qid = Number(req.params.questionId);
+  db.prepare("DELETE FROM flagged_questions WHERE attempt_id=? AND question_id=?").run(attempt.id, qid);
+  res.json({ ok: true, flagged: false });
+});
+
+// get flagged questions for an attempt
+app.get("/api/attempts/:id/flags", requireAuth, (req, res) => {
+  const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.id));
+  if (!attempt || attempt.user_id !== req.user.id) return res.status(404).json({ error: "Attempt not found" });
+  const rows = db.prepare("SELECT question_id, flagged_at FROM flagged_questions WHERE attempt_id=?").all(attempt.id);
+  const flags = {};
+  rows.forEach(r => { flags[r.question_id] = r.flagged_at; });
+  res.json(flags);
+});
+
+// clone an exam with all its questions
+app.post("/api/exams/:id/clone", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const srcExam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(req.params.id));
+  if (!srcExam) return res.status(404).json({ error: "Source exam not found" });
+  const suffix = req.body?.suffix || " (Copy)";
+  const newTitle = srcExam.title + suffix;
+  const slug = newTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
+  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, created_at) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, NULL, NULL, ?, ?)").run(slug, newTitle, srcExam.subject, srcExam.duration_minutes, srcExam.pass_percent, srcExam.camera_required, req.user.username, req.user.id, srcExam.negative_marks || 0, srcExam.randomize_questions, Date.now());
+  const newExamId = Number(info.lastInsertRowid);
+  const questions = db.prepare("SELECT * FROM questions WHERE exam_id=? ORDER BY order_index").all(srcExam.id);
+  const qIns = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, difficulty, topic, explanation, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  for (const q of questions) {
+    qIns.run(newExamId, q.type, q.prompt, q.options, q.answer, q.marks, q.difficulty, q.topic, q.explanation, q.order_index);
+  }
+  auditLog(req.user, "clone_exam", "exam", newExamId, { source_exam_id: srcExam.id, title: newTitle, question_count: questions.length });
+  const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(newExamId);
+  res.json(exam);
+});
+
+// export results as Excel
+app.get("/api/results/export", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), async (req, res) => {
+  try {
+    const examId = req.query.examId ? Number(req.query.examId) : null;
+    let attempts;
+    if (examId) {
+      attempts = db.prepare("SELECT a.*, e.title as exam_title FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.exam_id=? AND a.status='graded' ORDER BY a.percent DESC").all(examId);
+    } else {
+      attempts = db.prepare("SELECT a.*, e.title as exam_title FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.status='graded' ORDER BY a.submitted_at DESC LIMIT 500").all();
+    }
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Results");
+    ws.columns = [
+      { header: "Exam", key: "exam_title", width: 40 },
+      { header: "Student", key: "username", width: 20 },
+      { header: "Score", key: "score", width: 10 },
+      { header: "Total", key: "total", width: 10 },
+      { header: "Percent", key: "percent", width: 10 },
+      { header: "Status", key: "status_text", width: 10 },
+      { header: "Submitted", key: "submitted_at_text", width: 22 },
+    ];
+    const headerRow = ws.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF16A34A" } };
+    headerRow.commitRow();
+    for (const a of attempts) {
+      ws.addRow({
+        exam_title: a.exam_title || `Exam #${a.exam_id}`,
+        username: a.username,
+        score: a.score,
+        total: a.total,
+        percent: Math.round(a.percent * 10) / 10,
+        status_text: a.passed ? "Pass" : "Fail",
+        submitted_at_text: a.submitted_at ? new Date(a.submitted_at).toLocaleString() : "",
+      });
+    }
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", "attachment; filename=results.xlsx");
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (e) {
+    console.error("Export failed", e);
+    if (!res.headersSent) res.status(500).json({ error: "Export failed" });
+  }
 });
 
 // tab-switch violation reporting (during exam)

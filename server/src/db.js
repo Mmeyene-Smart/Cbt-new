@@ -98,11 +98,19 @@ CREATE TABLE IF NOT EXISTS tab_violations (
   user_id INTEGER NOT NULL,
   detected_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS flagged_questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attempt_id INTEGER NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+  question_id INTEGER NOT NULL REFERENCES questions(id),
+  flagged_at INTEGER NOT NULL,
+  UNIQUE(attempt_id, question_id)
+);
 CREATE INDEX IF NOT EXISTS idx_questions_exam ON questions(exam_id, order_index);
 CREATE INDEX IF NOT EXISTS idx_attempts_user_exam ON attempts(user_id, exam_id);
 CREATE INDEX IF NOT EXISTS idx_proctor_attempt ON proctor_snapshots(attempt_id, captured_at);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tabviol_attempt ON tab_violations(attempt_id, detected_at);
+CREATE INDEX IF NOT EXISTS idx_flagged_attempt ON flagged_questions(attempt_id);
 `);
 
 // ---- migrations for existing databases ----
@@ -130,6 +138,8 @@ addColumnIfMissing("exams", "scheduled_end", "INTEGER");
 addColumnIfMissing("exams", "randomize_questions", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("questions", "difficulty", "TEXT");
 addColumnIfMissing("questions", "topic", "TEXT");
+addColumnIfMissing("questions", "explanation", "TEXT");
+addColumnIfMissing("exams", "negative_marks", "REAL NOT NULL DEFAULT 0");
 
 // role CHECK constraint rebuild: SQLite cannot ALTER a CHECK, so the table is
 // recreated. Old roles map as: username 'admin' -> super_admin, any other

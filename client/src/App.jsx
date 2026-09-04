@@ -107,18 +107,26 @@ function ExamsAdmin({user}){
   const [exams,setExams]=useState([]);
   const [title,setTitle]=useState(""); const [subject,setSubject]=useState("General"); const [duration,setDuration]=useState(15);
   const [schedStart,setSchedStart]=useState(""); const [schedEnd,setSchedEnd]=useState(""); const [randomize,setRandomize]=useState(false);
+  const [negativeMarks,setNegativeMarks]=useState(0);
   const [selected,setSelected]=useState(null); const [qs,setQs]=useState([]);
   const [qPrompt,setQPrompt]=useState(""); const [qOptions,setQOptions]=useState("A,B,C,D"); const [qAnswer,setQAnswer]=useState("A"); const [qType,setQType]=useState("mcq");
-  const [qDifficulty,setQDifficulty]=useState(""); const [qTopic,setQTopic]=useState("");
+  const [qDifficulty,setQDifficulty]=useState(""); const [qTopic,setQTopic]=useState(""); const [qExplanation,setQExplanation]=useState("");
   const load=useCallback(()=> api("/api/exams").then(setExams),[]);
   useEffect(()=>{load();},[load]);
   const create=async(e)=>{
     e.preventDefault();
-    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize};
+    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize, negative_marks: Number(negativeMarks)};
     if(schedStart) body.scheduled_start = new Date(schedStart).getTime();
     if(schedEnd) body.scheduled_end = new Date(schedEnd).getTime();
     await api("/api/exams",{method:"POST", body});
-    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); load();
+    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); setNegativeMarks(0); load();
+  };
+  const cloneExam=async(id)=>{
+    if(!confirm("Clone this exam with all its questions?")) return;
+    try{
+      await api(`/api/exams/${id}/clone`,{method:"POST", body:{}});
+      load();
+    }catch(e){ alert(e.message); }
   };
   const openExam=async(id)=>{
     const data=await api(`/api/exams/${id}`);
@@ -131,9 +139,22 @@ function ExamsAdmin({user}){
     const body = {type:qType, prompt:qPrompt, options:opts, answer:ans};
     if(qDifficulty) body.difficulty = qDifficulty;
     if(qTopic) body.topic = qTopic;
+    if(qExplanation) body.explanation = qExplanation;
     await api(`/api/exams/${selected.id}/questions`,{method:"POST", body});
     const data=await api(`/api/exams/${selected.id}`);
-    setQs(data.questions); setQPrompt(""); setQDifficulty(""); setQTopic("");
+    setQs(data.questions); setQPrompt(""); setQDifficulty(""); setQTopic(""); setQExplanation("");
+  };
+  const exportResults=async()=>{
+    try{
+      const url = selected ? `/api/results/export?examId=${selected.id}` : "/api/results/export";
+      const res = await fetch(apiUrl(url), { headers: { Authorization: `Bearer ${getToken()||""}` }});
+      if(!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl; a.download = "results.xlsx"; a.click();
+      URL.revokeObjectURL(blobUrl);
+    }catch(e){ alert(e.message); }
   };
   return (
     <div className="grid lg:grid-cols-2 gap-6">
@@ -155,14 +176,23 @@ function ExamsAdmin({user}){
               <input type="datetime-local" value={schedEnd} onChange={e=>setSchedEnd(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm text-zinc-400">
-            <input type="checkbox" checked={randomize} onChange={e=>setRandomize(e.target.checked)} className="accent-[var(--a1)]"/>
-            Randomize question order for each student
-          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="flex items-center gap-2 text-sm text-zinc-400">
+              <input type="checkbox" checked={randomize} onChange={e=>setRandomize(e.target.checked)} className="accent-[var(--a1)]"/>
+              Randomize order
+            </label>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-zinc-500 shrink-0">Negative mark:</label>
+              <input type="number" step="0.05" min="0" max="1" value={negativeMarks} onChange={e=>setNegativeMarks(e.target.value)} className="w-16 rounded-xl border border-white/10 bg-night/60 px-2 py-1.5 text-xs outline-none"/>
+            </div>
+          </div>
           <button className="grad-bg w-full rounded-xl py-2 font-semibold text-night">Create</button>
         </form>
         <div className="glass rounded-2xl p-4">
-          <h4 className="font-semibold mb-3 text-sm">Exams</h4>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-semibold text-sm">Exams</h4>
+            <button onClick={()=>exportResults()} className="text-xs text-zinc-400 hover:text-white border border-white/10 rounded-lg px-2 py-1">Export Excel</button>
+          </div>
           <ul className="space-y-2">
             {exams.map(e=>{
               const now = Date.now();
@@ -172,13 +202,18 @@ function ExamsAdmin({user}){
               else if(e.scheduled_start || e.scheduled_end) schedLabel = "Available";
               return (
                 <li key={e.id} className={`flex items-center justify-between rounded-xl px-3 py-2 ${selected?.id===e.id?"bg-white/10":"hover:bg-white/5"}`}>
-                  <div><p className="text-sm font-medium">{e.title}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{e.title}</p>
                     <p className="text-xs text-zinc-500">{e.subject} · {e.duration_minutes}m · {e.question_count} Qs
                       {e.randomize_questions ? <span className="ml-1 text-violet-400">🔀</span> : null}
+                      {e.negative_marks > 0 && <span className="ml-1 text-amber-400">-{Math.round(e.negative_marks*100)}%</span>}
                       {schedLabel && <span className={`ml-1 ${e.scheduled_end && now > e.scheduled_end ? "text-rose-400" : "text-emerald-400"}`}>· {schedLabel}</span>}
                     </p>
                   </div>
-                  <button onClick={()=>openExam(e.id)} className="p-2 hover:bg-white/10 rounded-lg"><Eye className="h-4 w-4"/></button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={()=>cloneExam(e.id)} title="Clone exam" className="p-2 hover:bg-white/10 rounded-lg"><span className="text-xs">📋</span></button>
+                    <button onClick={()=>openExam(e.id)} className="p-2 hover:bg-white/10 rounded-lg"><Eye className="h-4 w-4"/></button>
+                  </div>
                 </li>
               );
             })}
@@ -189,7 +224,7 @@ function ExamsAdmin({user}){
         {!selected ? <p className="text-zinc-500 text-sm">Select an exam to manage questions.</p> : (
           <>
             <h3 className="font-semibold">{selected.title}</h3>
-            <p className="text-xs text-zinc-500 mb-3">{selected.subject}</p>
+            <p className="text-xs text-zinc-500 mb-3">{selected.subject} {selected.negative_marks > 0 && <span className="ml-2 text-amber-400">Negative marking: {Math.round(selected.negative_marks*100)}%</span>}</p>
             <ul className="space-y-2 mb-4 max-h-64 overflow-auto pr-1">
               {qs.map((q,i)=>(
                 <li key={q.id} className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
@@ -250,6 +285,7 @@ function ExamsAdmin({user}){
               <input value={qPrompt} onChange={e=>setQPrompt(e.target.value)} placeholder="Question prompt" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
               <input value={qOptions} onChange={e=>setQOptions(e.target.value)} placeholder="Options comma-separated" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
               <input value={qAnswer} onChange={e=>setQAnswer(e.target.value)} placeholder="Answer(s) comma-separated (exact option text)" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+              <input value={qExplanation} onChange={e=>setQExplanation(e.target.value)} placeholder="Explanation (shown in review after submit)" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
               <button onClick={addQ} className="w-full rounded-xl border border-white/10 bg-white/5 py-2 text-sm hover:bg-white/10">Add question</button>
             </div>
           </>
@@ -291,6 +327,18 @@ function ResultsAdmin({user}){
     const data=await api(`/api/results/combined?examIds=${ids}`);
     setCombined(data);
   };
+  const exportResults=async()=>{
+    try{
+      const url = selected ? `/api/results/export?examId=${selected}` : "/api/results/export";
+      const res = await fetch(apiUrl(url), { headers: { Authorization: `Bearer ${getToken()||""}` }});
+      if(!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl; a.download = "results.xlsx"; a.click();
+      URL.revokeObjectURL(blobUrl);
+    }catch(e){ alert(e.message); }
+  };
   return (
     <div className="space-y-4">
       <div className="glass rounded-2xl p-4 flex flex-wrap gap-2 items-center">
@@ -299,7 +347,8 @@ function ResultsAdmin({user}){
           <option value="">All</option>
           {exams.map(e=><option key={e.id} value={e.id}>{e.title}</option>)}
         </select>
-        <button onClick={loadCombined} className="ml-auto rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10">Combined analysis (first 2 exams)</button>
+        <button onClick={loadCombined} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10">Combined analysis</button>
+        <button onClick={exportResults} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10">Export Excel</button>
       </div>
       {combined && (
         <div className="glass rounded-2xl p-4">
@@ -466,13 +515,12 @@ function AuditLog(){
 }
 
 function ProctorWall(){
-  const [frames,setFrames]=useState({}); // attemptId -> {username, url, ts}
+  const [frames,setFrames]=useState({});
   useEffect(()=>{
     const s=getSocket();
     const joinWatch = () => s.emit("proctor:watch",{},(res)=>{
       if(res && !res.ok) console.warn("proctor:watch denied", res);
     });
-    // if already connected, join now; also re-join on every reconnect
     if (s.connected) joinWatch();
     s.on("connect", joinWatch);
     const onFrame=(f)=> setFrames(prev=>({...prev, [f.attemptId]: f}));
@@ -503,7 +551,7 @@ function ProctorWall(){
 
 // ===== Student =====
 function StudentShell({user,onLogout}){
-  const [view,setView]=useState("exams"); // exams | exam | results
+  const [view,setView]=useState("exams");
   const [examToTake,setExamToTake]=useState(null);
   return (
     <div className="min-h-screen flex flex-col">
@@ -533,7 +581,7 @@ function StudentExams({onTake}){
       {exams.map(e=>(
         <div key={e.id} className="glass rounded-2xl p-5">
           <h3 className="font-semibold">{e.title}</h3>
-          <p className="text-sm text-zinc-500">{e.subject} · {e.duration_minutes} min · {e.question_count} questions {e.camera_required?<span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-300"><Camera className="h-3 w-3"/> Camera required</span>:null}</p>
+          <p className="text-sm text-zinc-500">{e.subject} · {e.duration_minutes} min · {e.question_count} questions {e.camera_required?<span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-300"><Camera className="h-3 w-3"/> Camera required</span>:null} {e.negative_marks>0 && <span className="ml-2 text-xs text-amber-400">-{Math.round(e.negative_marks*100)}% wrong</span>}</p>
           <button onClick={()=>onTake(e)} className="mt-4 grad-bg rounded-xl px-5 py-2 text-sm font-semibold text-night">Start exam</button>
         </div>
       ))}
@@ -562,7 +610,8 @@ function StudentResults(){
 function ExamPlayer({exam, user, onBack}){
   const [questions,setQuestions]=useState([]);
   const [attempt,setAttempt]=useState(null);
-  const [answers,setAnswers]=useState({}); // qid -> given[]
+  const [answers,setAnswers]=useState({});
+  const [flags,setFlags]=useState({});
   const [idx,setIdx]=useState(0);
   const [endsAt,setEndsAt]=useState(null);
   const [now,setNow]=useState(Date.now());
@@ -577,33 +626,49 @@ function ExamPlayer({exam, user, onBack}){
   const screen = useScreenShare();
   const socketRef = useRef(null);
 
-  // load questions when exam changes
   useEffect(()=>{
     api(`/api/exams/${exam.id}`).then(d=> setQuestions(d.questions));
   },[exam.id]);
 
-  // timer tick
+  useEffect(()=>{
+    if(!attempt) return;
+    api(`/api/attempts/${attempt.attemptId}/answers`).then(d=>{
+      if(d.answers) setAnswers(d.answers);
+      if(d.endsAt) setEndsAt(d.endsAt);
+    }).catch(()=>{});
+    api(`/api/attempts/${attempt.attemptId}/flags`).then(d=>{
+      if(d) setFlags(d);
+    }).catch(()=>{});
+  },[attempt]);
+
+  useEffect(()=>{
+    if(!started || !attempt) return;
+    const iv = setInterval(()=>{
+      Object.entries(answers).forEach(([qid, given])=>{
+        api(`/api/attempts/${attempt.attemptId}/answer`,{method:"POST", body:{questionId:Number(qid), given}}).catch(()=>{});
+      });
+    }, 30000);
+    return ()=>clearInterval(iv);
+  },[started, attempt]);
+
   useEffect(()=>{
     if(!endsAt) return;
     const t=setInterval(()=>setNow(Date.now()),1000);
     return ()=>clearInterval(t);
   },[endsAt]);
 
-  // auto-submit on expiry
   useEffect(()=>{
     if(endsAt && now >= endsAt && attempt && !result) doSubmit();
   },[now, endsAt]);
 
-  // tab-switch detection
   useEffect(()=>{
     if(!started || !attempt) return;
     const onVisChange=()=>{
       if(document.hidden){
         setTabViolations(v=>{
           const next=v+1;
-          // report to server
           api(`/api/attempts/${attempt.attemptId}/tab-violation`,{method:"POST"}).then(d=>{
-            if(d.autoSubmitted && d.graded){ setResult(d.graded); camera.stop(); screen.stop(); }
+            if(d.autoSubmitted && d.graded){ setResult({attempt:d.graded, questions:[]}); camera.stop(); screen.stop(); }
           }).catch(()=>{});
           return next;
         });
@@ -614,7 +679,6 @@ function ExamPlayer({exam, user, onBack}){
     return ()=>document.removeEventListener("visibilitychange",onVisChange);
   },[started, attempt]);
 
-  // live camera + screen snapshot loops
   useEffect(()=>{
     if(!started || !attempt || camera.state!=="granted") return;
     const s=getSocket();
@@ -641,16 +705,12 @@ function ExamPlayer({exam, user, onBack}){
   const remaining = endsAt ? Math.max(0, Math.floor((endsAt - now)/1000)) : 0;
   const mins = Math.floor(remaining/60); const secs = remaining%60;
 
-  // getDisplayMedia() requires transient user activation: it must be invoked in the
-  // same synchronous turn as a real click, with no prior `await`. So camera and screen
-  // are enabled by their own dedicated buttons rather than from inside startExam().
   const enableCamera=async()=>{
     if(!cameraConsent) return alert("Please tick the camera consent box first.");
     await camera.start();
   };
   const enableScreen=()=>{
     if(!screenConsent) return alert("Please tick the screen-sharing consent box first.");
-    // NOTE: no await before this call — doing so would consume the click's activation.
     return screen.start();
   };
 
@@ -659,7 +719,6 @@ function ExamPlayer({exam, user, onBack}){
   const startExam=async()=>{
     if(exam.camera_required){
       if(!cameraConsent || !screenConsent) return alert("Please consent to camera and screen sharing to start this exam.");
-      // safe to read state here: grants happened in earlier clicks, so this is not stale
       if(camera.state!=="granted") return alert("Enable your camera before starting this exam.");
       if(screen.state!=="granted") return alert("Share your entire screen before starting this exam.");
     }
@@ -678,24 +737,68 @@ function ExamPlayer({exam, user, onBack}){
     try{ await api(`/api/attempts/${attempt.attemptId}/answer`,{method:"POST", body:{questionId:qid, given}});}catch{}
   };
 
+  const toggleFlag=async(qid)=>{
+    if(!attempt) return;
+    const isFlagged = flags[qid];
+    try{
+      if(isFlagged){
+        await api(`/api/attempts/${attempt.attemptId}/flag/${qid}`,{method:"DELETE"});
+        setFlags(f=>{ const n={...f}; delete n[qid]; return n; });
+      }else{
+        await api(`/api/attempts/${attempt.attemptId}/flag/${qid}`,{method:"POST"});
+        setFlags(f=>({...f, [qid]: Date.now()}));
+      }
+    }catch{}
+  };
+
   const doSubmit=async()=>{
     if(submitting || !attempt) return;
     setSubmitting(true);
     try{
-      const graded=await api(`/api/attempts/${attempt.attemptId}/submit`,{method:"POST"});
-      setResult(graded);
+      const data=await api(`/api/attempts/${attempt.attemptId}/submit`,{method:"POST"});
+      setResult(data);
       camera.stop();
       screen.stop();
     }catch(e){ alert(e.message); } finally{ setSubmitting(false); }
   };
 
   if(result){
+    const att = result.attempt || result;
+    const qs = result.questions || [];
+    const correctCount = qs.filter(q=>q.is_correct).length;
     return (
-      <div className="glass rounded-2xl p-8 text-center">
-        <h3 className="font-display text-2xl font-bold">{result.passed ? <span className="text-emerald-400 flex items-center justify-center gap-2"><CheckCircle className="h-6 w-6"/> Passed</span> : <span className="text-rose-400 flex items-center justify-center gap-2"><XCircle className="h-6 w-6"/> Failed</span>}</h3>
-        <p className="mt-2 text-3xl font-bold">{result.score} / {result.total} — {Math.round(result.percent)}%</p>
-        <p className="mt-1 text-sm text-zinc-500">Exam: {exam.title}</p>
-        <button onClick={onBack} className="mt-6 rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm hover:bg-white/10">Back to exams</button>
+      <div className="space-y-4">
+        <div className="glass rounded-2xl p-8 text-center">
+          <h3 className="font-display text-2xl font-bold">{att.passed ? <span className="text-emerald-400 flex items-center justify-center gap-2"><CheckCircle className="h-6 w-6"/> Passed</span> : <span className="text-rose-400 flex items-center justify-center gap-2"><XCircle className="h-6 w-6"/> Failed</span>}</h3>
+          <p className="mt-2 text-3xl font-bold">{att.score} / {att.total} — {Math.round(att.percent)}%</p>
+          <p className="mt-1 text-sm text-zinc-500">{correctCount}/{qs.length} correct · {exam.title}</p>
+          <button onClick={onBack} className="mt-6 rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm hover:bg-white/10">Back to exams</button>
+        </div>
+        {qs.length > 0 && (
+          <div className="space-y-3">
+            <h4 className="font-semibold text-sm">Review Answers</h4>
+            {qs.map((q, i) => (
+              <div key={q.id} className={`glass rounded-xl p-4 border-l-4 ${q.is_correct ? "border-emerald-500" : "border-rose-500"}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-medium">{i+1}. {q.prompt}</p>
+                  <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${q.is_correct ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"}`}>{q.is_correct ? "Correct" : "Wrong"} · {q.marks_awarded}/{q.marks_total}</span>
+                </div>
+                <div className="mt-2 space-y-1 text-xs">
+                  {q.options.map(opt => {
+                    const isCorrect = q.correct.includes(opt);
+                    const isGiven = q.given.includes(opt);
+                    let cls = "text-zinc-500";
+                    if(isCorrect && isGiven) cls = "text-emerald-400 font-semibold";
+                    else if(isCorrect && !isGiven) cls = "text-emerald-400";
+                    else if(!isCorrect && isGiven) cls = "text-rose-400 line-through";
+                    return <p key={opt} className={cls}>{isGiven ? "→ " : "  "}{opt} {isCorrect ? "✓" : ""}</p>;
+                  })}
+                </div>
+                {q.explanation && <p className="mt-2 text-xs text-zinc-400 italic">💡 {q.explanation}</p>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -704,11 +807,13 @@ function ExamPlayer({exam, user, onBack}){
     return (
       <div className="glass rounded-2xl p-6 max-w-xl mx-auto">
         <h3 className="font-semibold text-lg">{exam.title}</h3>
-        <p className="text-sm text-zinc-500">{exam.subject} · {exam.duration_minutes} min · {questions.length} questions</p>
+        <p className="text-sm text-zinc-500">{exam.subject} · {exam.duration_minutes} min · {questions.length} questions {exam.negative_marks > 0 && <span className="ml-2 text-amber-400">· {Math.round(exam.negative_marks*100)}% negative marking</span>}</p>
         <div className="mt-4 space-y-2 text-sm text-zinc-300">
           <p>• <b>Duration:</b> {exam.duration_minutes} minutes. The countdown is server-enforced and auto-submits upon expiry.</p>
-          <p>• <b>Auto-save:</b> Your selected answers are saved instantly upon selection.</p>
-          {exam.camera_required && <p className="flex items-center gap-2 text-amber-300"><Camera className="h-4 w-4"/> <Monitor className="h-4 w-4"/> Proctored examination — live camera and full-screen snapshots every 5 seconds (requires HTTPS or localhost).</p>}
+          <p>• <b>Auto-save:</b> Your selected answers are saved instantly and periodically.</p>
+          <p>• <b>Flagging:</b> You can flag questions to review later using the navigation panel.</p>
+          {exam.negative_marks > 0 && <p className="text-amber-300">• <b>Negative marking:</b> Wrong answers incur a {Math.round(exam.negative_marks*100)}% penalty per mark.</p>}
+          {exam.camera_required && <p className="flex items-center gap-2 text-amber-300"><Camera className="h-4 w-4"/> <Monitor className="h-4 w-4"/> Proctored examination — live camera and full-screen snapshots every 5 seconds.</p>}
         </div>
         {exam.camera_required && (
           <>
@@ -731,7 +836,7 @@ function ExamPlayer({exam, user, onBack}){
                 <span className="flex items-center gap-2"><Monitor className="h-4 w-4"/> {screen.state==="granted"?"Screen sharing enabled":screen.state==="requesting"?"Waiting for screen picker…":"Step 2 — Share entire screen"}</span>
                 {screen.state==="granted" ? <CheckCircle className="h-4 w-4 text-emerald-500"/> : <span className="text-xs text-zinc-500">required</span>}
               </button>
-              <p className="text-xs text-zinc-500">Choose <b>Entire Screen</b> in the picker — sharing a single tab or window will be rejected by your invigilator.</p>
+              <p className="text-xs text-zinc-500">Choose <b>Entire Screen</b> in the picker.</p>
             </div>
           </>
         )}
@@ -743,7 +848,6 @@ function ExamPlayer({exam, user, onBack}){
             {proctorReady ? "Start exam" : "Complete the steps above"}
           </button>
         </div>
-        {/* hidden video elements for snapshot capture — no self-view but still capturable */}
         <video ref={camera.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
         <video ref={screen.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
       </div>
@@ -753,6 +857,8 @@ function ExamPlayer({exam, user, onBack}){
   const q = questions[idx];
   if(!q) return <p className="text-zinc-500">Loading questions…</p>;
   const given = answers[q.id] || [];
+  const answeredCount = questions.filter(qq => answers[qq.id] && answers[qq.id].length > 0).length;
+  const flaggedCount = Object.keys(flags).length;
   return (
     <div className="grid lg:grid-cols-[1fr_280px] gap-6">
       <div className="glass rounded-2xl p-5">
@@ -764,7 +870,12 @@ function ExamPlayer({exam, user, onBack}){
         )}
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-medium">Question {idx+1} / {questions.length}</span>
-          <span className={`font-mono text-sm px-3 py-1 rounded-full ${remaining<60?"bg-rose-500/20 text-rose-300":"bg-white/5 text-zinc-300"}`}><Clock className="inline h-3 w-3 mr-1"/>{String(mins).padStart(2,"0")}:{String(secs).padStart(2,"0")}</span>
+          <div className="flex items-center gap-2">
+            <button onClick={()=>toggleFlag(q.id)} className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition ${flags[q.id]?"bg-amber-500/20 text-amber-300 border border-amber-500/30":"bg-white/5 text-zinc-400 border border-white/10 hover:bg-white/10"}`}>
+              {flags[q.id] ? "★ Flagged" : "☆ Flag"}
+            </button>
+            <span className={`font-mono text-sm px-3 py-1 rounded-full ${remaining<60?"bg-rose-500/20 text-rose-300":"bg-white/5 text-zinc-300"}`}><Clock className="inline h-3 w-3 mr-1"/>{String(mins).padStart(2,"0")}:{String(secs).padStart(2,"0")}</span>
+          </div>
         </div>
         <h4 className="font-medium">{q.prompt}</h4>
         <div className="mt-4 space-y-2">
@@ -794,18 +905,52 @@ function ExamPlayer({exam, user, onBack}){
           <p className="mt-2 text-xs flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${camera.state==="granted"?"bg-emerald-500 animate-pulse":"bg-zinc-300"}`}/> Camera {camera.state==="granted"?"active":"not active"}</p>
           <p className="text-xs flex items-center gap-1.5"><span className={`h-2 w-2 rounded-full ${screen.state==="granted"?"bg-emerald-500 animate-pulse":"bg-zinc-300"}`}/> Screen share {screen.state==="granted"?"active":"not active"}</p>
           {(camera.error || screen.error) && <p className="mt-2 text-xs text-rose-500">{camera.error || screen.error}</p>}
-          {/* hidden video elements for capture — no self-view but still capturable */}
           <video ref={camera.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
           <video ref={screen.videoRef} autoPlay muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
         </div>
         <div className="glass rounded-2xl p-4">
-          <p className="text-sm font-semibold mb-2">Questions</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-semibold">Questions</p>
+            <span className="text-xs text-zinc-500">{answeredCount}/{questions.length} answered</span>
+          </div>
           <div className="grid grid-cols-5 gap-2">
-            {questions.map((qq,i)=>(
-              <button key={qq.id} onClick={()=>setIdx(i)} className={`h-9 rounded-lg text-sm font-medium ${i===idx?"grad-bg text-night": answers[qq.id]?"bg-white/10 text-white":"bg-white/5 text-zinc-500"}`}>{i+1}</button>
-            ))}
+            {questions.map((qq,i)=>{
+              const isAnswered = answers[qq.id] && answers[qq.id].length > 0;
+              const isFlagged = flags[qq.id];
+              const isCurrent = i===idx;
+              let cls = "bg-white/5 text-zinc-500";
+              if(isCurrent) cls = "grad-bg text-night";
+              else if(isAnswered && isFlagged) cls = "bg-amber-500/30 text-white";
+              else if(isAnswered) cls = "bg-emerald-500/20 text-emerald-300";
+              else if(isFlagged) cls = "bg-amber-500/10 text-amber-300";
+              return (
+                <button key={qq.id} onClick={()=>setIdx(i)} className={`relative h-9 rounded-lg text-sm font-medium ${cls}`}>
+                  {i+1}
+                  {isFlagged && <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-amber-400 border border-night"/>}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-500">
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500/40"/> Answered</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400"/> Flagged</span>
+            <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-white/10"/> Unanswered</span>
           </div>
         </div>
+        {flaggedCount > 0 && (
+          <div className="glass rounded-2xl p-4">
+            <p className="text-sm font-semibold mb-2">Flagged ({flaggedCount})</p>
+            <div className="space-y-1">
+              {Object.keys(flags).map(qid => {
+                const qq = questions.find(q=>q.id===Number(qid));
+                if(!qq) return null;
+                const qi = questions.indexOf(qq);
+                return <button key={qid} onClick={()=>setIdx(qi)} className="w-full text-left text-xs text-amber-300 hover:text-amber-200 truncate py-0.5">Q{qi+1}: {qq.prompt.slice(0,40)}…</button>;
+              })}
+            </div>
+          </div>
+        )}
+        <button onClick={doSubmit} disabled={submitting} className="w-full rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{submitting?"Submitting…":"Submit Exam"}</button>
       </div>
     </div>
   );
