@@ -31,7 +31,7 @@ export function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: "Missing token" });
   try {
     const payload = verifyToken(token);
-    req.user = { id: Number(payload.sub), username: payload.username, role: payload.role, admin_subjects: payload.admin_subjects || [] };
+    req.user = { id: Number(payload.sub), username: payload.username, role: payload.role, admin_subjects: payload.admin_subjects || [], subjects: payload.subjects || [] };
     next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
@@ -82,7 +82,7 @@ router.post("/register", async (req, res) => {
       .prepare("INSERT INTO users (username, password_hash, role, full_name, student_code, subjects, admin_subjects, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)")
       .run(username, hash, role, fullName, studentCode, JSON.stringify(subjects), null, Date.now());
     const id = Number(info.lastInsertRowid);
-    const token = jwt.sign({ sub: id, username, role }, SECRET, { expiresIn: "1d" });
+    const token = jwt.sign({ sub: id, username, role, subjects }, SECRET, { expiresIn: "1d" });
     res.json({ token, user: { id, username, role, full_name: fullName, student_code: studentCode, subjects, admin_subjects: [] } });
   } catch (e) {
     if (String(e.message).includes("UNIQUE")) return res.status(409).json({ error: "Username taken." });
@@ -101,7 +101,7 @@ router.post("/login", async (req, res) => {
   try { subjects = user.subjects ? JSON.parse(user.subjects) : []; } catch { subjects = []; }
   let admin_subjects = [];
   try { admin_subjects = user.admin_subjects ? JSON.parse(user.admin_subjects) : []; } catch { admin_subjects = []; }
-  const token = jwt.sign({ sub: user.id, username: user.username, role: user.role, admin_subjects }, SECRET, { expiresIn: "1d" });
+  const token = jwt.sign({ sub: user.id, username: user.username, role: user.role, subjects, admin_subjects }, SECRET, { expiresIn: "1d" });
   res.json({
     token,
     user: { id: user.id, username: user.username, role: user.role, full_name: user.full_name, student_code: user.student_code, subjects, admin_subjects },

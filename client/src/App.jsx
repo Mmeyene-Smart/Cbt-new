@@ -621,17 +621,35 @@ function StudentShell({user,onLogout}){
 
 function StudentExams({onTake}){
   const [exams,setExams]=useState([]);
-  useEffect(()=>{ api("/api/exams").then(setExams); },[]);
+  const [statuses,setStatuses]=useState({});
+  useEffect(()=>{ api("/api/exams").then(setExams); api("/api/exams/my-status").then(setStatuses); },[]);
+  const now=Date.now();
   return (
     <div className="grid md:grid-cols-2 gap-4">
-      {exams.map(e=>(
-        <div key={e.id} className="glass rounded-2xl p-5">
-          <h3 className="font-semibold">{e.title}</h3>
-          <p className="text-sm text-zinc-500">{e.subject} · {e.duration_minutes} min · {e.question_count} questions {e.camera_required?<span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-300"><Camera className="h-3 w-3"/> Camera required</span>:null} {e.negative_marks>0 && <span className="ml-2 text-xs text-amber-400">-{Math.round(e.negative_marks*100)}% wrong</span>}</p>
-          <button onClick={()=>onTake(e)} className="mt-4 grad-bg rounded-xl px-5 py-2 text-sm font-semibold text-night">Start exam</button>
-        </div>
-      ))}
-      {!exams.length && <p className="text-zinc-500">No exams published.</p>}
+      {exams.map(e=>{
+        const att = statuses[e.id];
+        const scheduled = e.scheduled_start && e.scheduled_start > now;
+        const inProgress = att && att.status === "in_progress";
+        const completed = att && (att.status === "submitted" || att.status === "graded");
+        let badge = null;
+        if(scheduled) badge = <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300">Scheduled</span>;
+        else if(inProgress) badge = <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">In Progress</span>;
+        else if(completed) badge = <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">Completed</span>;
+        else badge = <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-white/10 text-zinc-300">Available</span>;
+        let btnLabel = "Start exam";
+        if(scheduled) btnLabel = "Not yet available";
+        else if(inProgress) btnLabel = "Resume exam";
+        else if(completed) btnLabel = "Retake exam";
+        return (
+          <div key={e.id} className="glass rounded-2xl p-5">
+            <h3 className="font-semibold">{e.title} {badge}</h3>
+            <p className="text-sm text-zinc-500">{e.subject} · {e.duration_minutes} min · {e.question_count} questions {e.camera_required?<span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-300"><Camera className="h-3 w-3"/> Camera required</span>:null} {e.negative_marks>0 && <span className="ml-2 text-xs text-amber-400">-{Math.round(e.negative_marks*100)}% wrong</span>}</p>
+            {completed && att && <p className="mt-1 text-xs text-zinc-500">Last score: {att.score}/{att.total} ({Math.round(att.percent)}%)</p>}
+            <button onClick={()=>onTake(e)} disabled={scheduled} className="mt-4 grad-bg rounded-xl px-5 py-2 text-sm font-semibold text-night disabled:opacity-50 disabled:cursor-not-allowed">{btnLabel}</button>
+          </div>
+        );
+      })}
+      {!exams.length && <p className="text-zinc-500">No exams available for your registered subjects.</p>}
     </div>
   );
 }
@@ -643,9 +661,15 @@ function StudentResults(){
     <div className="glass rounded-2xl p-5">
       <h3 className="font-semibold mb-3">My Results</h3>
       <table className="w-full text-sm">
-        <thead className="text-xs text-zinc-500"><tr><th className="text-left p-2">Exam</th><th className="text-left p-2">Score</th><th className="text-left p-2">%</th><th className="text-left p-2">Status</th></tr></thead>
+        <thead className="text-xs text-zinc-500"><tr><th className="text-left p-2">Exam</th><th className="text-left p-2">Score</th><th className="text-left p-2">%</th><th className="text-left p-2">Date</th><th className="text-left p-2">Status</th></tr></thead>
         <tbody>{rows.map(r=>(
-          <tr key={r.id} className="border-t border-white/5"><td className="p-2">{r.exam_id}</td><td className="p-2">{r.score}/{r.total}</td><td className="p-2">{Math.round(r.percent)}%</td><td className="p-2">{r.passed?<span className="text-emerald-400">Pass</span>:<span className="text-rose-400">Fail</span>}</td></tr>
+          <tr key={r.id} className="border-t border-white/5">
+            <td className="p-2">{r.exam_title || `Exam #${r.exam_id}`}</td>
+            <td className="p-2">{r.score}/{r.total}</td>
+            <td className="p-2">{Math.round(r.percent)}%</td>
+            <td className="p-2 text-xs text-zinc-500">{r.submitted_at ? new Date(r.submitted_at).toLocaleDateString() : "—"}</td>
+            <td className="p-2">{r.passed ? <span className="text-emerald-400">Pass</span> : <span className="text-rose-400">Fail</span>}</td>
+          </tr>
         ))}</tbody>
       </table>
       {!rows.length && <p className="text-center text-sm text-zinc-600 py-6">No results yet — take an exam first.</p>}
@@ -668,6 +692,7 @@ function ExamPlayer({exam, user, onBack}){
   const [started,setStarted]=useState(false);
   const [tabViolations,setTabViolations]=useState(0);
   const [tabWarning,setTabWarning]=useState(false);
+  const [instructionsStep, setInstructionsStep] = useState("instructions"); // instructions → consent → exam
   const camera = useCamera(started && exam.camera_required);
   const screen = useScreenShare();
   const socketRef = useRef(null);
@@ -850,20 +875,47 @@ function ExamPlayer({exam, user, onBack}){
   }
 
   if(!started){
+    if(instructionsStep === "instructions"){
+      return (
+        <div className="glass rounded-2xl p-6 max-w-xl mx-auto">
+          <h3 className="font-semibold text-lg">{exam.title}</h3>
+          <p className="text-sm text-zinc-500">{exam.subject} · {exam.duration_minutes} min · {questions.length} questions</p>
+          <div className="mt-4 space-y-2 text-sm text-zinc-300">
+            <p className="text-xs text-zinc-500 uppercase tracking-wide font-medium mb-2">Exam Rules & Instructions</p>
+            <p>• <b>Duration:</b> {exam.duration_minutes} minutes. The countdown is server-enforced and auto-submits upon expiry.</p>
+            <p>• <b>Navigation:</b> Use the question panel on the right to jump between questions. Answered questions are marked green.</p>
+            <p>• <b>Flagging:</b> Use the flag icon to mark questions for review. Flagged questions appear in the sidebar for quick access.</p>
+            <p>• <b>Auto-save:</b> Your answers are saved every 30 seconds and instantly when you select an option.</p>
+            <p>• <b>Submission:</b> Click "Submit exam" when done. You cannot change answers after submission.</p>
+            {exam.negative_marks > 0 && <p className="text-amber-300">• <b>Negative marking:</b> Wrong answers incur a {Math.round(exam.negative_marks*100)}% penalty per mark. Leave uncertain answers blank to avoid penalties.</p>}
+            {exam.camera_required && <>
+              <p className="text-amber-300">• <b>Tab switching:</b> Switching tabs/windows is monitored. After 5 violations your exam will be auto-submitted.</p>
+              <p className="text-amber-300">• <b>Proctoring:</b> Camera and full-screen snapshots are taken every 5 seconds during the exam.</p>
+            </>}
+            <p>• <b>No switching:</b> Do not leave this page or open other browser tabs during the exam.</p>
+          </div>
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-white/10 bg-white/5 p-3">
+            <CheckCircle className="h-5 w-5 text-zinc-400 shrink-0 mt-0.5"/>
+            <p className="text-sm text-zinc-300">I have read and understood the exam rules. I will follow all instructions during the examination.</p>
+          </div>
+          <div className="mt-6 flex gap-3">
+            <button onClick={onBack} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm">Cancel</button>
+            <button onClick={()=>setInstructionsStep("consent")} className="grad-bg flex-1 rounded-xl py-2.5 font-semibold text-night">
+              {exam.camera_required ? "Continue to camera setup" : "Start exam"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    // instructionsStep === "consent" — camera consent page
     return (
       <div className="glass rounded-2xl p-6 max-w-xl mx-auto">
         <h3 className="font-semibold text-lg">{exam.title}</h3>
         <p className="text-sm text-zinc-500">{exam.subject} · {exam.duration_minutes} min · {questions.length} questions {exam.negative_marks > 0 && <span className="ml-2 text-amber-400">· {Math.round(exam.negative_marks*100)}% negative marking</span>}</p>
-        <div className="mt-4 space-y-2 text-sm text-zinc-300">
-          <p>• <b>Duration:</b> {exam.duration_minutes} minutes. The countdown is server-enforced and auto-submits upon expiry.</p>
-          <p>• <b>Auto-save:</b> Your selected answers are saved instantly and periodically.</p>
-          <p>• <b>Flagging:</b> You can flag questions to review later using the navigation panel.</p>
-          {exam.negative_marks > 0 && <p className="text-amber-300">• <b>Negative marking:</b> Wrong answers incur a {Math.round(exam.negative_marks*100)}% penalty per mark.</p>}
-          {exam.camera_required && <p className="flex items-center gap-2 text-amber-300"><Camera className="h-4 w-4"/> <Monitor className="h-4 w-4"/> Proctored examination — live camera and full-screen snapshots every 5 seconds.</p>}
-        </div>
         {exam.camera_required && (
           <>
-            <label className="mt-4 flex items-start gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
+            <p className="mt-3 text-xs text-zinc-500 uppercase tracking-wide font-medium">Camera & Screen Consent</p>
+            <label className="mt-3 flex items-start gap-2 rounded-xl border border-white/10 bg-white/5 p-3 text-sm">
               <input type="checkbox" checked={cameraConsent} onChange={e=>setCameraConsent(e.target.checked)} className="mt-1"/>
               <span>I consent to camera snapshots for proctoring, stored until 30 days after submission.</span>
             </label>
@@ -889,7 +941,7 @@ function ExamPlayer({exam, user, onBack}){
         {camera.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>{camera.error}</p>}
         {screen.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>Screen: {screen.error}</p>}
         <div className="mt-6 flex gap-3">
-          <button onClick={onBack} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm">Cancel</button>
+          <button onClick={()=>setInstructionsStep("instructions")} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm">Back</button>
           <button onClick={startExam} disabled={!proctorReady} className="grad-bg flex-1 rounded-xl py-2.5 font-semibold text-night disabled:opacity-50 disabled:cursor-not-allowed">
             {proctorReady ? "Start exam" : "Complete the steps above"}
           </button>

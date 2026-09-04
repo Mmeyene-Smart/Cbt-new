@@ -146,12 +146,29 @@ app.get("/api/exams/template.xlsx", requireAuth, requireRole("super_admin", "sub
 
 app.get("/api/exams", requireAuth, (req, res) => {
   const rows = db.prepare("SELECT e.*, (SELECT COUNT(*) FROM questions q WHERE q.exam_id=e.id) AS question_count FROM exams e ORDER BY e.id DESC").all();
-  // subject scoping for admin roles
   if (req.user.role === "super_admin") return res.json(rows);
-  if (req.user.role === "student") return res.json(rows); // students see all (scheduling enforced at start)
+  // students: only show exams for subjects they're registered for
+  if (req.user.role === "student") {
+    let studentSubjects = [];
+    try { studentSubjects = req.user.subjects || []; } catch { studentSubjects = []; }
+    if (!studentSubjects.length) return res.json([]); // no subjects = no exams
+    return res.json(rows.filter(e => studentSubjects.includes(e.subject)));
+  }
+  // admin roles: subject scoping
   const adminSubs = req.user.admin_subjects || [];
-  if (!adminSubs.length) return res.json(rows); // empty = all
+  if (!adminSubs.length) return res.json(rows);
   res.json(rows.filter(e => adminSubs.includes(e.subject)));
+});
+
+app.get("/api/exams/my-status", requireAuth, (req, res) => {
+  if (req.user.role !== "student") return res.json({});
+  const exams = db.prepare("SELECT id FROM exams").all();
+  const result = {};
+  for (const e of exams) {
+    const att = db.prepare("SELECT id, status, score, total, percent FROM attempts WHERE exam_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1").get(e.id, req.user.id);
+    result[e.id] = att || null;
+  }
+  res.json(result);
 });
 
 app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
@@ -547,8 +564,8 @@ app.get("/api/attempts/:id", requireAuth, (req, res) => {
 app.get("/api/results", requireAuth, (req, res) => {
   const examId = req.query.examId ? Number(req.query.examId) : null;
   let rows;
-  if (examId) rows = db.prepare("SELECT id, exam_id, user_id, username, score, total, percent, passed, submitted_at FROM attempts WHERE exam_id=? AND status='graded' ORDER BY percent DESC").all(examId);
-  else rows = db.prepare("SELECT id, exam_id, user_id, username, score, total, percent, passed, submitted_at FROM attempts WHERE status='graded' ORDER BY submitted_at DESC LIMIT 100").all();
+  if (examId) rows = db.prepare("SELECT a.id, a.exam_id, a.user_id, a.username, a.score, a.total, a.percent, a.passed, a.submitted_at, e.title AS exam_title FROM attempts a JOIN exams e ON e.id = a.exam_id WHERE a.exam_id=? AND a.status='graded' ORDER BY a.percent DESC").all(examId);
+  else rows = db.prepare("SELECT a.id, a.exam_id, a.user_id, a.username, a.score, a.total, a.percent, a.passed, a.submitted_at, e.title AS exam_title FROM attempts a JOIN exams e ON e.id = a.exam_id WHERE a.status='graded' ORDER BY a.submitted_at DESC LIMIT 100").all();
   if (req.user.role !== "admin") rows = rows.filter(r=>r.user_id===req.user.id);
   res.json(rows);
 });
