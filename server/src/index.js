@@ -16,6 +16,18 @@ import sanitizeHtml from "sanitize-html";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+
+// Seeded PRNG (mulberry32) + Fisher-Yates shuffle
+function seededRandom(seed) {
+  let s = seed | 0;
+  return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function seededShuffle(arr, seed) {
+  const rng = seededRandom(seed);
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
 const corsOrigin = process.env.CORS_ORIGIN;
 const allowedOrigins = corsOrigin ? corsOrigin.split(",").map(s=>s.trim()).filter(Boolean) : [];
 const UPLOADS_BASE = process.env.UPLOADS_DIR || path.join(__dirname, "..", "uploads");
@@ -109,6 +121,60 @@ app.get("/api/students", requireAuth, requireRole("super_admin", "subject_admin"
     return { ...r, subjects };
   });
   res.json(parsed);
+});
+
+// ===== Question Bank =====
+app.get("/api/bank", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const subject = req.query.subject || null;
+  let rows;
+  if (subject) rows = db.prepare("SELECT * FROM question_bank WHERE subject=? ORDER BY id DESC").all(subject);
+  else rows = db.prepare("SELECT * FROM question_bank ORDER BY id DESC LIMIT 200").all();
+  res.json(rows.map(r => ({ ...r, options: JSON.parse(r.options), answer: JSON.parse(r.answer) })));
+});
+app.post("/api/bank", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const { subject, type, prompt, options, answer, marks, difficulty, topic, explanation } = req.body ?? {};
+  const s = sanitize(prompt);
+  if (!s || !Array.isArray(options) || !Array.isArray(answer)) return res.status(400).json({ error: "subject, type, prompt, options[], answer[] required" });
+  const diffVal = difficulty ? sanitize(difficulty).slice(0,50) : null;
+  const topicVal = topic ? sanitize(topic).slice(0,100) : null;
+  const explVal = explanation ? sanitize(explanation).slice(0,2000) : null;
+  const info = db.prepare("INSERT INTO question_bank (subject, type, prompt, options, answer, marks, difficulty, topic, explanation, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(sanitize(subject)||"General", type||"mcq", s, JSON.stringify(options), JSON.stringify(answer), Number(marks)||1, diffVal, topicVal, explVal, req.user.username, Date.now());
+  res.json({ id: Number(info.lastInsertRowid) });
+});
+app.delete("/api/bank/:id", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  db.prepare("DELETE FROM question_bank WHERE id=?").run(Number(req.params.id));
+  res.json({ ok: true });
+});
+// Add question(s) from bank to an exam
+app.post("/api/bank/add-to-exam", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const examId = Number(req.body?.examId);
+  const bankIds = req.body?.bankIds || [];
+  if (!examId || !bankIds.length) return res.status(400).json({ error: "examId and bankIds[] required" });
+  const exam = db.prepare("SELECT id FROM exams WHERE id=?").get(examId);
+  if (!exam) return res.status(404).json({ error: "Exam not found" });
+  const maxOrder = db.prepare("SELECT COALESCE(MAX(order_index),-1)+1 AS next FROM questions WHERE exam_id=?").get(examId).next;
+  const bankQs = db.prepare(`SELECT * FROM question_bank WHERE id IN (${bankIds.map(()=>"?").join(",")})`).all(...bankIds);
+  const ins = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, difficulty, topic, explanation, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  let added = 0;
+  bankQs.forEach((q, i) => {
+    try { ins.run(examId, q.type, q.prompt, q.options, q.answer, q.marks, q.difficulty, q.topic, q.explanation, maxOrder + i); added++; } catch {}
+  });
+  res.json({ added });
+});
+
+// ===== Exam Templates =====
+app.get("/api/templates", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  res.json(db.prepare("SELECT * FROM exam_templates ORDER BY id DESC").all());
+});
+app.post("/api/templates", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const { name, subject, duration_minutes, pass_percent, camera_required, negative_marks, randomize_questions, randomize_options } = req.body ?? {};
+  if (!name || name.length < 2) return res.status(400).json({ error: "Template name required" });
+  const info = db.prepare("INSERT INTO exam_templates (name, subject, duration_minutes, pass_percent, camera_required, negative_marks, randomize_questions, randomize_options, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(sanitize(name), sanitize(subject)||"General", duration_minutes||30, pass_percent||50, camera_required!==false?1:0, negative_marks||0, randomize_questions?1:0, randomize_options?1:0, req.user.username, Date.now());
+  res.json({ id: Number(info.lastInsertRowid) });
+});
+app.delete("/api/templates/:id", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  db.prepare("DELETE FROM exam_templates WHERE id=?").run(Number(req.params.id));
+  res.json({ ok: true });
 });
 
 app.get("/api/exams/template.xlsx", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), async (_req, res) => {
@@ -229,11 +295,12 @@ app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", 
   const scheduledStart = req.body?.scheduled_start ? Number(req.body.scheduled_start) : null;
   const scheduledEnd = req.body?.scheduled_end ? Number(req.body.scheduled_end) : null;
   const randomizeQuestions = req.body?.randomize_questions ? 1 : 0;
+  const randomizeOptions = req.body?.randomize_options ? 1 : 0;
   const negativeMarks = Math.max(0, Math.min(1, Number(req.body?.negative_marks) || 0));
   if (!title || title.length < 3 || title.length > 120) return res.status(400).json({ error: "Title must be 3-120 characters" });
   if (/[<>]/.test(title) || /[<>]/.test(subject)) return res.status(400).json({ error: "Invalid characters in title/subject" });
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
-  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, req.user.id, negativeMarks, scheduledStart, scheduledEnd, randomizeQuestions, Date.now());
+  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, randomize_options, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, req.user.id, negativeMarks, scheduledStart, scheduledEnd, randomizeQuestions, randomizeOptions, Date.now());
   const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(info.lastInsertRowid));
   res.json(exam);
 });
@@ -243,18 +310,29 @@ app.get("/api/exams/:id", requireAuth, (req, res) => {
   if (!exam) return res.status(404).json({ error: "Exam not found" });
   const questions = db.prepare("SELECT id, exam_id, type, prompt, options, answer, marks, difficulty, topic, explanation, order_index FROM questions WHERE exam_id=? ORDER BY order_index").all(exam.id);
   const isStudent = req.user.role === "student";
-  let sanitized = questions.map(q => ({
-    ...q,
-    options: JSON.parse(q.options),
-    answer: isStudent ? undefined : JSON.parse(q.answer),
-    explanation: isStudent ? undefined : q.explanation,
-  }));
+  // Get option seed from student's in-progress attempt
+  let optionSeed = null;
+  if (isStudent) {
+    const att = db.prepare("SELECT option_seed FROM attempts WHERE exam_id=? AND user_id=? AND status='in_progress' ORDER BY started_at DESC LIMIT 1").get(exam.id, req.user.id);
+    if (att) optionSeed = att.option_seed;
+  }
+  let sanitized = questions.map(q => {
+    let opts = JSON.parse(q.options);
+    // Shuffle options if randomize_options is enabled and we have a seed
+    if (isStudent && exam.randomize_options && optionSeed) {
+      const qSeed = Number(optionSeed) ^ q.id;
+      opts = seededShuffle(opts, qSeed);
+    }
+    return {
+      ...q,
+      options: opts,
+      answer: isStudent ? undefined : JSON.parse(q.answer),
+      explanation: isStudent ? undefined : q.explanation,
+    };
+  });
   // randomize question order for students if exam has randomize_questions enabled
   if (isStudent && exam.randomize_questions) {
-    for (let i = sanitized.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [sanitized[i], sanitized[j]] = [sanitized[j], sanitized[i]];
-    }
+    sanitized = seededShuffle(sanitized, Number(optionSeed || Date.now()));
   }
   res.json({ exam, questions: sanitized });
 });
@@ -357,7 +435,8 @@ app.post("/api/attempts/start", requireAuth, requireRole("student"), (req, res) 
     const qCount = qRow ? qRow.n : 0;
     if (!qCount) return res.status(400).json({ error: "Exam has no questions" });
     const endsAt = now + exam.duration_minutes * 60 * 1000;
-    const info = db.prepare("INSERT INTO attempts (exam_id, user_id, username, status, score, total, percent, passed, camera_consent_at, started_at, ends_at) VALUES (?, ?, ?, 'in_progress', 0, ?, 0, 0, ?, ?, ?)").run(examId, req.user.id, req.user.username, qCount, cameraConsentAt, now, endsAt);
+    const optionSeed = exam.randomize_options ? String(Date.now() ^ (req.user.id * 0x5bd1e995)) : null;
+    const info = db.prepare("INSERT INTO attempts (exam_id, user_id, username, status, score, total, percent, passed, camera_consent_at, started_at, ends_at, option_seed) VALUES (?, ?, ?, 'in_progress', 0, ?, 0, 0, ?, ?, ?, ?)").run(examId, req.user.id, req.user.username, qCount, cameraConsentAt, now, endsAt, optionSeed);
     const attemptId = Number(info.lastInsertRowid);
     res.json({ attemptId, endsAt, exam });
   } catch (e) {
@@ -613,6 +692,56 @@ app.get("/api/results/export", requireAuth, requireRole("super_admin", "subject_
   }
 });
 
+// PDF-style HTML report export
+app.get("/api/results/report", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const examId = req.query.examId ? Number(req.query.examId) : null;
+  let attempts, examTitle = "All Exams";
+  if (examId) {
+    const exam = db.prepare("SELECT title FROM exams WHERE id=?").get(examId);
+    examTitle = exam?.title || `Exam #${examId}`;
+    attempts = db.prepare("SELECT a.*, e.title as exam_title FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.exam_id=? AND a.status='graded' ORDER BY a.percent DESC").all(examId);
+  } else {
+    attempts = db.prepare("SELECT a.*, e.title as exam_title FROM attempts a JOIN exams e ON e.id=a.exam_id WHERE a.status='graded' ORDER BY a.submitted_at DESC LIMIT 500").all();
+  }
+  const total = attempts.length;
+  const passed = attempts.filter(a => a.passed).length;
+  const avgPercent = total ? Math.round(attempts.reduce((s, a) => s + a.percent, 0) / total) : 0;
+  const passRate = total ? Math.round((passed / total) * 100) : 0;
+  const rows = attempts.map((a, i) => `<tr><td>${i + 1}</td><td>${a.username}</td><td>${a.exam_title || ""}</td><td>${a.score}/${a.total}</td><td>${Math.round(a.percent)}%</td><td class="${a.passed ? "pass" : "fail"}">${a.passed ? "Pass" : "Fail"}</td><td>${a.submitted_at ? new Date(a.submitted_at).toLocaleDateString() : ""}</td></tr>`).join("");
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Report - ${examTitle}</title><style>
+    @media print { body { margin: 0; } }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; padding: 40px; color: #1a1a2e; background: #fff; }
+    h1 { font-size: 22px; color: #16a34a; margin-bottom: 4px; }
+    h2 { font-size: 14px; color: #666; font-weight: normal; margin-bottom: 20px; }
+    .stats { display: flex; gap: 16px; margin-bottom: 24px; }
+    .stat { flex: 1; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; text-align: center; }
+    .stat .num { font-size: 28px; font-weight: bold; color: #16a34a; }
+    .stat .label { font-size: 12px; color: #64748b; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #16a34a; color: #fff; padding: 10px 12px; text-align: left; font-weight: 600; }
+    td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .pass { color: #16a34a; font-weight: 600; }
+    .fail { color: #dc2626; font-weight: 600; }
+    .footer { margin-top: 24px; font-size: 11px; color: #94a3b8; text-align: center; border-top: 1px solid #e2e8f0; padding-top: 12px; }
+    @media print { .no-print { display: none; } }
+  </style></head><body>
+    <h1>Examination Results Report</h1><h2>${examTitle} — Generated ${new Date().toLocaleDateString()}</h2>
+    <div class="stats">
+      <div class="stat"><div class="num">${total}</div><div class="label">Total Attempts</div></div>
+      <div class="stat"><div class="num">${passed}</div><div class="label">Passed</div></div>
+      <div class="stat"><div class="num">${avgPercent}%</div><div class="label">Average Score</div></div>
+      <div class="stat"><div class="num">${passRate}%</div><div class="label">Pass Rate</div></div>
+    </div>
+    <table><thead><tr><th>#</th><th>Student</th><th>Exam</th><th>Score</th><th>%</th><th>Status</th><th>Date</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="footer">University Student Examination Portal — CBT Platform Report</div>
+    <div class="no-print" style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#16a34a;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px">Print / Save as PDF</button></div>
+  </body></html>`;
+  res.setHeader("Content-Type", "text/html");
+  res.send(html);
+});
+
 // tab-switch violation reporting (during exam)
 app.post("/api/attempts/:id/tab-violation", requireAuth, (req, res) => {
   const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.id));
@@ -635,6 +764,16 @@ app.get("/api/attempts/:id/violations", requireAuth, (req, res) => {
   if (req.user.role === "student" && attempt.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
   const rows = db.prepare("SELECT id, detected_at FROM tab_violations WHERE attempt_id=? ORDER BY detected_at DESC").all(attempt.id);
   res.json(rows);
+});
+
+// Student review: read-only detailed review of a graded attempt
+app.get("/api/attempts/:id/review", requireAuth, (req, res) => {
+  const attempt = db.prepare("SELECT a.*, e.title AS exam_title, e.subject, e.pass_percent FROM attempts a JOIN exams e ON e.id = a.exam_id WHERE a.id = ?").get(Number(req.params.id));
+  if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+  if (req.user.role === "student" && attempt.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+  if (attempt.status !== "graded") return res.status(400).json({ error: "Only graded attempts can be reviewed" });
+  const detailed = getDetailedResults(attempt.id);
+  res.json({ ...detailed, exam_title: attempt.exam_title, subject: attempt.subject });
 });
 
 app.get("/api/attempts/:id", requireAuth, (req, res) => {

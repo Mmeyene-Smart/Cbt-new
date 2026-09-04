@@ -15,12 +15,146 @@ export default function App(){
 function doLogout(setUser){ return ()=>{ destroySocket(); clearSession(); setUser(null); } }
 
 // ===== Admin =====
+function QuestionBank({user}){
+  const [items,setItems]=useState([]);
+  const [subject,setSubject]=useState(""); const [filterSub,setFilterSub]=useState("");
+  const [qType,setQType]=useState("mcq"); const [qPrompt,setQPrompt]=useState("");
+  const [qOptions,setQOptions]=useState("A,B,C,D"); const [qAnswer,setQAnswer]=useState("A");
+  const [qMarks,setQMarks]=useState(1); const [qDifficulty,setQDifficulty]=useState(""); const [qTopic,setQTopic]=useState(""); const [qExplanation,setQExplanation]=useState("");
+  const [exams,setExams]=useState([]); const [targetExam,setTargetExam]=useState("");
+  const [selectedIds,setSelectedIds]=useState({});
+  const load=useCallback(()=> api(`/api/bank${filterSub?"?subject="+encodeURIComponent(filterSub):""}`).then(setItems),[filterSub]);
+  useEffect(()=>{load(); api("/api/exams").then(setExams);},[load]);
+  const addQuestion=async()=>{
+    const opts=qOptions.split(",").map(s=>s.trim()).filter(Boolean);
+    const ans=qAnswer.split(",").map(s=>s.trim()).filter(Boolean);
+    await api("/api/bank",{method:"POST", body:{subject:subject||"General", type:qType, prompt:qPrompt, options:opts, answer:ans, marks:Number(qMarks), difficulty:qDifficulty||undefined, topic:qTopic||undefined, explanation:qExplanation||undefined}});
+    setQPrompt(""); setQDifficulty(""); setQTopic(""); setQExplanation(""); load();
+  };
+  const deleteQ=async(id)=>{ if(!confirm("Delete?")) return; await api(`/api/bank/${id}`,{method:"DELETE"}); load(); };
+  const addToExam=async()=>{
+    const ids=Object.keys(selectedIds).filter(k=>selectedIds[k]);
+    if(!targetExam||!ids.length) return alert("Select questions and a target exam");
+    const d=await api("/api/bank/add-to-exam",{method:"POST", body:{examId:Number(targetExam), bankIds:ids.map(Number)}});
+    alert(`Added ${d.added} questions to exam`); setSelectedIds({});
+  };
+  const toggleSelect=(id)=>setSelectedIds(p=>({...p,[id]:!p[id]}));
+  const subjects=[...new Set(items.map(i=>i.subject))];
+  return (
+    <div className="space-y-4">
+      <div className="glass rounded-2xl p-5">
+        <h3 className="font-semibold mb-3">Add to Bank</h3>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="Subject" className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          <select value={qType} onChange={e=>setQType(e.target.value)} className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm"><option value="mcq">MCQ</option><option value="multi">Multi</option><option value="tf">True/False</option></select>
+        </div>
+        <textarea value={qPrompt} onChange={e=>setQPrompt(e.target.value)} placeholder="Question prompt" rows={2} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none resize-none mb-2"/>
+        <div className="grid grid-cols-2 gap-3 mb-2">
+          <input value={qOptions} onChange={e=>setQOptions(e.target.value)} placeholder="Options (comma-sep)" className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          <input value={qAnswer} onChange={e=>setQAnswer(e.target.value)} placeholder="Correct (comma-sep)" className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+        </div>
+        <div className="grid grid-cols-4 gap-2 mb-3">
+          <input type="number" value={qMarks} onChange={e=>setQMarks(e.target.value)} min={1} className="rounded-xl border border-white/10 bg-night/60 px-2 py-1.5 text-xs outline-none" title="Marks"/>
+          <input value={qDifficulty} onChange={e=>setQDifficulty(e.target.value)} placeholder="Difficulty" className="rounded-xl border border-white/10 bg-night/60 px-2 py-1.5 text-xs outline-none"/>
+          <input value={qTopic} onChange={e=>setQTopic(e.target.value)} placeholder="Topic" className="rounded-xl border border-white/10 bg-night/60 px-2 py-1.5 text-xs outline-none"/>
+          <button onClick={addQuestion} className="grad-bg rounded-xl text-sm font-semibold text-night">Add</button>
+        </div>
+        <textarea value={qExplanation} onChange={e=>setQExplanation(e.target.value)} placeholder="Explanation (optional)" rows={1} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-1.5 text-xs outline-none resize-none"/>
+      </div>
+      <div className="glass rounded-2xl p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold">Bank ({items.length})</h3>
+          <div className="flex items-center gap-2">
+            <select value={filterSub} onChange={e=>setFilterSub(e.target.value)} className="rounded-lg border border-white/10 bg-night/60 px-2 py-1 text-xs"><option value="">All subjects</option>{subjects.map(s=><option key={s} value={s}>{s}</option>)}</select>
+            {Object.values(selectedIds).filter(Boolean).length > 0 && <>
+              <select value={targetExam} onChange={e=>setTargetExam(e.target.value)} className="rounded-lg border border-white/10 bg-night/60 px-2 py-1 text-xs"><option value="">Target exam…</option>{exams.map(e=><option key={e.id} value={e.id}>{e.title}</option>)}</select>
+              <button onClick={addToExam} className="grad-bg rounded-lg px-3 py-1 text-xs font-semibold text-night">Add to Exam ({Object.values(selectedIds).filter(Boolean).length})</button>
+            </>}
+          </div>
+        </div>
+        <div className="space-y-2 max-h-[500px] overflow-y-auto">
+          {items.map(q=>(
+            <div key={q.id} className={`flex items-start gap-3 rounded-xl border px-3 py-2 text-sm ${selectedIds[q.id]?"border-[var(--a1)] bg-[var(--a1)]/5":"border-white/5 hover:bg-white/5"}`}>
+              <input type="checkbox" checked={!!selectedIds[q.id]} onChange={()=>toggleSelect(q.id)} className="mt-1 accent-[var(--a1)]"/>
+              <div className="flex-1 min-w-0">
+                <p className="truncate">{q.prompt}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">{q.subject} · {q.type} · {q.marks}m {q.difficulty?`· ${q.difficulty}`:""} {q.topic?`· ${q.topic}`:""}</p>
+              </div>
+              <button onClick={()=>deleteQ(q.id)} className="text-zinc-500 hover:text-rose-400 shrink-0"><Trash2 className="h-4 w-4"/></button>
+            </div>
+          ))}
+          {!items.length && <p className="text-zinc-500 text-sm text-center py-4">No questions in bank.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExamTemplates({user}){
+  const [templates,setTemplates]=useState([]);
+  const [name,setName]=useState(""); const [subject,setSubject]=useState("General"); const [duration,setDuration]=useState(30);
+  const [passPct,setPassPct]=useState(50); const [camera,setCamera]=useState(true); const [negMarks,setNegMarks]=useState(0);
+  const [randQ,setRandQ]=useState(false); const [randO,setRandO]=useState(false);
+  const load=useCallback(()=> api("/api/templates").then(setTemplates),[]);
+  useEffect(()=>{load();},[load]);
+  const create=async()=>{
+    if(!name.trim()) return alert("Name required");
+    await api("/api/templates",{method:"POST", body:{name, subject, duration_minutes:Number(duration), pass_percent:Number(passPct), camera_required:camera, negative_marks:Number(negMarks), randomize_questions:randQ, randomize_options:randO}});
+    setName(""); load();
+  };
+  const del=async(id)=>{ if(!confirm("Delete template?")) return; await api(`/api/templates/${id}`,{method:"DELETE"}); load(); };
+  const useTemplate=(t)=>{
+    navigator.clipboard?.writeText(`Create exam "${t.name}": ${t.duration_minutes}min, ${t.pass_percent}% pass, camera=${t.camera_required}, neg=${t.negative_marks}, randQ=${t.randomize_questions}, randO=${t.randomize_options}`);
+    alert("Template settings copied — paste into exam creation form.");
+  };
+  return (
+    <div className="space-y-4">
+      <div className="glass rounded-2xl p-5">
+        <h3 className="font-semibold mb-3">Save Current Settings as Template</h3>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="Template name" className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          <input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="Subject" className="rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+        </div>
+        <div className="grid grid-cols-4 gap-2 mb-3">
+          <input type="number" value={duration} onChange={e=>setDuration(e.target.value)} min={5} max={180} className="rounded-xl border border-white/10 bg-night/60 px-2 py-1.5 text-xs outline-none" title="Duration"/>
+          <input type="number" value={passPct} onChange={e=>setPassPct(e.target.value)} min={0} max={100} className="rounded-xl border border-white/10 bg-night/60 px-2 py-1.5 text-xs outline-none" title="Pass %"/>
+          <input type="number" value={negMarks} onChange={e=>setNegMarks(e.target.value)} min={0} max={1} step={0.05} className="rounded-xl border border-white/10 bg-night/60 px-2 py-1.5 text-xs outline-none" title="Neg marks"/>
+          <button onClick={create} className="grad-bg rounded-xl text-sm font-semibold text-night">Save</button>
+        </div>
+        <div className="flex gap-4 text-sm text-zinc-400">
+          <label className="flex items-center gap-1.5"><input type="checkbox" checked={camera} onChange={e=>setCamera(e.target.checked)} className="accent-[var(--a1)]"/> Camera</label>
+          <label className="flex items-center gap-1.5"><input type="checkbox" checked={randQ} onChange={e=>setRandQ(e.target.checked)} className="accent-[var(--a1)]"/> Rand Q</label>
+          <label className="flex items-center gap-1.5"><input type="checkbox" checked={randO} onChange={e=>setRandO(e.target.checked)} className="accent-[var(--a1)]"/> Rand Opts</label>
+        </div>
+      </div>
+      <div className="glass rounded-2xl p-5">
+        <h3 className="font-semibold mb-3">Saved Templates</h3>
+        <div className="space-y-2">
+          {templates.map(t=>(
+            <div key={t.id} className="flex items-center justify-between rounded-xl border border-white/5 px-4 py-3 hover:bg-white/5">
+              <div>
+                <p className="text-sm font-medium">{t.name}</p>
+                <p className="text-xs text-zinc-500">{t.subject} · {t.duration_minutes}min · {t.pass_percent}% pass · cam={t.camera_required?"on":"off"} · neg={t.negative_marks}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={()=>useTemplate(t)} className="text-xs text-zinc-400 hover:text-white border border-white/10 rounded-lg px-2 py-1">Use</button>
+                <button onClick={()=>del(t.id)} className="text-xs text-zinc-500 hover:text-rose-400"><Trash2 className="h-4 w-4"/></button>
+              </div>
+            </div>
+          ))}
+          {!templates.length && <p className="text-zinc-500 text-sm text-center py-4">No templates saved.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AdminShell({user,onLogout}){
   const [tab,setTab]=useState("dashboard");
   const [theme,setTheme]=useState(()=> localStorage.getItem("cbt.theme") || "light");
   const isAdmin = ["super_admin","subject_admin"].includes(user.role);
   const isSuperAdmin = user.role === "super_admin";
-  const allTabs = ["dashboard","exams","students","results","proctor","admins","audit"];
+  const allTabs = ["dashboard","exams","bank","templates","students","results","proctor","admins","audit"];
   const tabs = allTabs.filter(t => {
     if (t === "admins" || t === "audit") return isSuperAdmin;
     return true;
@@ -55,6 +189,8 @@ function AdminShell({user,onLogout}){
       <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
         {tab==="dashboard" && <AdminDashboard user={user}/>}
         {tab==="exams" && <ExamsAdmin user={user}/>}
+        {tab==="bank" && <QuestionBank user={user}/>}
+        {tab==="templates" && <ExamTemplates user={user}/>}
         {tab==="students" && <StudentsAdmin user={user}/>}
         {tab==="results" && <ResultsAdmin user={user}/>}
         {tab==="proctor" && <ProctorWall/>}
@@ -106,7 +242,7 @@ function AdminDashboard({user}){
 function ExamsAdmin({user}){
   const [exams,setExams]=useState([]);
   const [title,setTitle]=useState(""); const [subject,setSubject]=useState("General"); const [duration,setDuration]=useState(15);
-  const [schedStart,setSchedStart]=useState(""); const [schedEnd,setSchedEnd]=useState(""); const [randomize,setRandomize]=useState(false);
+  const [schedStart,setSchedStart]=useState(""); const [schedEnd,setSchedEnd]=useState(""); const [randomize,setRandomize]=useState(false); const [randomizeOptions,setRandomizeOptions]=useState(false);
   const [negativeMarks,setNegativeMarks]=useState(0);
   const [selected,setSelected]=useState(null); const [qs,setQs]=useState([]);
   const [qPrompt,setQPrompt]=useState(""); const [qOptions,setQOptions]=useState("A,B,C,D"); const [qAnswer,setQAnswer]=useState("A"); const [qType,setQType]=useState("mcq");
@@ -115,11 +251,11 @@ function ExamsAdmin({user}){
   useEffect(()=>{load();},[load]);
   const create=async(e)=>{
     e.preventDefault();
-    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize, negative_marks: Number(negativeMarks)};
+    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize, randomize_options: randomizeOptions, negative_marks: Number(negativeMarks)};
     if(schedStart) body.scheduled_start = new Date(schedStart).getTime();
     if(schedEnd) body.scheduled_end = new Date(schedEnd).getTime();
     await api("/api/exams",{method:"POST", body});
-    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); setNegativeMarks(0); load();
+    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); setRandomizeOptions(false); setNegativeMarks(0); load();
   };
   const cloneExam=async(id)=>{
     if(!confirm("Clone this exam with all its questions?")) return;
@@ -176,10 +312,14 @@ function ExamsAdmin({user}){
               <input type="datetime-local" value={schedEnd} onChange={e=>setSchedEnd(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <label className="flex items-center gap-2 text-sm text-zinc-400">
               <input type="checkbox" checked={randomize} onChange={e=>setRandomize(e.target.checked)} className="accent-[var(--a1)]"/>
               Randomize order
+            </label>
+            <label className="flex items-center gap-2 text-sm text-zinc-400">
+              <input type="checkbox" checked={randomizeOptions} onChange={e=>setRandomizeOptions(e.target.checked)} className="accent-[var(--a1)]"/>
+              Shuffle options
             </label>
             <div className="flex items-center gap-2">
               <label className="text-xs text-zinc-500 shrink-0">Negative mark:</label>
@@ -206,6 +346,7 @@ function ExamsAdmin({user}){
                     <p className="text-sm font-medium truncate">{e.title}</p>
                     <p className="text-xs text-zinc-500">{e.subject} · {e.duration_minutes}m · {e.question_count} Qs
                       {e.randomize_questions ? <span className="ml-1 text-violet-400">🔀</span> : null}
+                      {e.randomize_options ? <span className="ml-1 text-blue-400">🎲</span> : null}
                       {e.negative_marks > 0 && <span className="ml-1 text-amber-400">-{Math.round(e.negative_marks*100)}%</span>}
                       {schedLabel && <span className={`ml-1 ${e.scheduled_end && now > e.scheduled_end ? "text-rose-400" : "text-emerald-400"}`}>· {schedLabel}</span>}
                     </p>
@@ -349,6 +490,7 @@ function ResultsAdmin({user}){
         </select>
         <button onClick={loadCombined} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10">Combined analysis</button>
         <button onClick={exportResults} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10">Export Excel</button>
+        <button onClick={()=>{const url=selected?`/api/results/report?examId=${selected}`:"/api/results/report"; window.open(apiUrl(url),"_blank");}} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10">Report (PDF)</button>
       </div>
       {combined && (
         <div className="glass rounded-2xl p-4">
@@ -721,12 +863,46 @@ function StudentExams({onTake}){
 
 function StudentResults(){
   const [rows,setRows]=useState([]);
+  const [review,setReview]=useState(null);
   useEffect(()=>{ api("/api/results").then(setRows); },[]);
+  if(review){
+    const att = review.attempt || review;
+    const qs = review.questions || [];
+    return (
+      <div className="space-y-4">
+        <button onClick={()=>setReview(null)} className="text-sm text-zinc-400 hover:text-white flex items-center gap-1"><ChevronLeft className="h-4 w-4"/> Back to results</button>
+        <div className="glass rounded-2xl p-6">
+          <h3 className="font-semibold">{review.exam_title || "Exam"} — Review</h3>
+          <p className="text-sm text-zinc-500 mt-1">{att.score}/{att.total} — {Math.round(att.percent)}% · {att.passed ? <span className="text-emerald-400">Pass</span> : <span className="text-rose-400">Fail</span>}</p>
+        </div>
+        {qs.map((q,i)=>(
+          <div key={q.id} className={`glass rounded-xl p-4 border-l-4 ${q.is_correct?"border-emerald-500":"border-rose-500"}`}>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-sm font-medium">{i+1}. {q.prompt}</p>
+              <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${q.is_correct?"bg-emerald-500/20 text-emerald-300":"bg-rose-500/20 text-rose-300"}`}>{q.is_correct?"Correct":"Wrong"} · {q.marks_awarded}/{q.marks_total}</span>
+            </div>
+            <div className="mt-2 space-y-1 text-xs">
+              {q.options.map(opt=>{
+                const isCorrect=q.correct.includes(opt);
+                const isGiven=q.given.includes(opt);
+                return (
+                  <div key={opt} className={`flex items-center gap-2 rounded-lg px-3 py-1.5 ${isCorrect?"bg-emerald-500/10 text-emerald-300":isGiven?"bg-rose-500/10 text-rose-300":"text-zinc-500"}`}>
+                    <span>{isCorrect?"✓":isGiven?"✗":"○"}</span><span>{opt}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {q.explanation && <p className="mt-2 text-xs text-zinc-400 bg-white/5 rounded-lg px-3 py-2">💡 {q.explanation}</p>}
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="glass rounded-2xl p-5">
       <h3 className="font-semibold mb-3">My Results</h3>
       <table className="w-full text-sm">
-        <thead className="text-xs text-zinc-500"><tr><th className="text-left p-2">Exam</th><th className="text-left p-2">Score</th><th className="text-left p-2">%</th><th className="text-left p-2">Date</th><th className="text-left p-2">Status</th></tr></thead>
+        <thead className="text-xs text-zinc-500"><tr><th className="text-left p-2">Exam</th><th className="text-left p-2">Score</th><th className="text-left p-2">%</th><th className="text-left p-2">Date</th><th className="text-left p-2">Status</th><th className="text-left p-2"></th></tr></thead>
         <tbody>{rows.map(r=>(
           <tr key={r.id} className="border-t border-white/5">
             <td className="p-2">{r.exam_title || `Exam #${r.exam_id}`}</td>
@@ -734,6 +910,7 @@ function StudentResults(){
             <td className="p-2">{Math.round(r.percent)}%</td>
             <td className="p-2 text-xs text-zinc-500">{r.submitted_at ? new Date(r.submitted_at).toLocaleDateString() : "—"}</td>
             <td className="p-2">{r.passed ? <span className="text-emerald-400">Pass</span> : <span className="text-rose-400">Fail</span>}</td>
+            <td className="p-2"><button onClick={()=>api(`/api/attempts/${r.id}/review`).then(setReview)} className="text-xs text-zinc-400 hover:text-white border border-white/10 rounded-lg px-2 py-1">Review</button></td>
           </tr>
         ))}</tbody>
       </table>

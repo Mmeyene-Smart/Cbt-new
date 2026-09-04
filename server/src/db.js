@@ -102,6 +102,33 @@ CREATE TABLE IF NOT EXISTS exam_messages (
   body TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS question_bank (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject TEXT NOT NULL,
+  type TEXT NOT NULL CHECK(type IN ('mcq','multi','tf')),
+  prompt TEXT NOT NULL,
+  options TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  marks INTEGER NOT NULL DEFAULT 1,
+  difficulty TEXT,
+  topic TEXT,
+  explanation TEXT,
+  created_by TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS exam_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  subject TEXT,
+  duration_minutes INTEGER NOT NULL DEFAULT 30,
+  pass_percent INTEGER NOT NULL DEFAULT 50,
+  camera_required INTEGER NOT NULL DEFAULT 1,
+  negative_marks REAL NOT NULL DEFAULT 0,
+  randomize_questions INTEGER NOT NULL DEFAULT 0,
+  randomize_options INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tab_violations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   attempt_id INTEGER NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
@@ -150,6 +177,8 @@ addColumnIfMissing("questions", "difficulty", "TEXT");
 addColumnIfMissing("questions", "topic", "TEXT");
 addColumnIfMissing("questions", "explanation", "TEXT");
 addColumnIfMissing("exams", "negative_marks", "REAL NOT NULL DEFAULT 0");
+addColumnIfMissing("attempts", "option_seed", "TEXT");
+addColumnIfMissing("exams", "randomize_options", "INTEGER NOT NULL DEFAULT 0");
 
 // role CHECK constraint rebuild: SQLite cannot ALTER a CHECK, so the table is
 // recreated. Old roles map as: username 'admin' -> super_admin, any other
