@@ -516,28 +516,74 @@ function AuditLog(){
 
 function ProctorWall(){
   const [frames,setFrames]=useState({});
+  const [socketOk,setSocketOk]=useState(false);
+  const [lastPoll,setLastPoll]=useState(0);
   useEffect(()=>{
     const s=getSocket();
-    const joinWatch = () => s.emit("proctor:watch",{},(res)=>{
-      if(res && !res.ok) console.warn("proctor:watch denied", res);
-    });
+    let alive=true;
+    const joinWatch = () => {
+      if(!alive) return;
+      s.emit("proctor:watch",{},(res)=>{
+        if(res && res.ok) setSocketOk(true);
+        else { setSocketOk(false); console.warn("proctor:watch denied", res); }
+      });
+    };
     if (s.connected) joinWatch();
     s.on("connect", joinWatch);
+    s.on("connect_error", ()=> setSocketOk(false));
+    s.on("disconnect", ()=> setSocketOk(false));
     const onFrame=(f)=> setFrames(prev=>({...prev, [f.attemptId]: f}));
     s.on("proctor:frame", onFrame);
-    return ()=>{ s.off("proctor:frame", onFrame); s.off("connect", joinWatch); };
+    return ()=>{ alive=false; s.off("proctor:frame", onFrame); s.off("connect", joinWatch); s.off("connect_error"); s.off("disconnect"); };
   },[]);
+
+  // HTTP polling fallback — fetches latest snapshots every 5s regardless of socket
+  useEffect(()=>{
+    let alive=true;
+    const poll=async()=>{
+      if(!alive) return;
+      try{
+        const data = await api("/api/proctor/live");
+        if(Array.isArray(data) && alive){
+          setFrames(prev=>{
+            const next={...prev};
+            for(const f of data){
+              if(!next[f.attemptId] || f.ts > (next[f.attemptId]?.ts||0)){
+                next[f.attemptId]=f;
+              }
+            }
+            return next;
+          });
+          setLastPoll(Date.now());
+        }
+      }catch{}
+    };
+    poll();
+    const iv=setInterval(poll, 5000);
+    return ()=>{ alive=false; clearInterval(iv); };
+  },[]);
+
   const entries=Object.values(frames);
   return (
     <div>
-      <div className="flex items-center gap-2 mb-4"><Video className="h-5 w-5 text-zinc-400"/><h3 className="font-semibold">Live Proctor Wall</h3><span className="ml-2 text-xs text-zinc-500">{entries.length} active streams</span></div>
+      <div className="flex items-center gap-2 mb-4">
+        <Video className="h-5 w-5 text-zinc-400"/>
+        <h3 className="font-semibold">Live Proctor Wall</h3>
+        <span className="ml-2 text-xs text-zinc-500">{entries.length} active streams</span>
+        <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${socketOk?"bg-emerald-500/20 text-emerald-400":"bg-amber-500/20 text-amber-300"}`}>
+          {socketOk ? "● Live (socket)" : "● Polling mode"}
+        </span>
+      </div>
       {!entries.length ? <div className="glass rounded-2xl p-12 text-center text-zinc-500"><Camera className="h-8 w-8 mx-auto mb-2"/><p className="text-sm">No live camera feeds — students appear here while taking exams.</p><p className="text-xs mt-1">Camera snapshots every ~5s during an attempt.</p></div> : (
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {entries.map(f=>(
             <div key={f.attemptId} className="glass rounded-2xl overflow-hidden">
               <ProctorImage url={f.url} alt={f.username} />
               <div className="p-3 flex items-center justify-between">
-                <span className="text-sm font-medium">{f.username}</span>
+                <div>
+                  <span className="text-sm font-medium">{f.username}</span>
+                  {f.examTitle && <p className="text-xs text-zinc-500 truncate">{f.examTitle}</p>}
+                </div>
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse"/>
               </div>
               <p className="px-3 pb-3 text-xs text-zinc-500">Attempt #{f.attemptId} · {new Date(f.ts).toLocaleTimeString()}</p>

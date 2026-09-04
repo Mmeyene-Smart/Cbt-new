@@ -564,6 +564,39 @@ app.get("/api/results/combined", requireAuth, requireRole("super_admin", "subjec
   res.json({ exams: ids, attempts, stats: { total, avgPercent: Math.round(avg*10)/10, passRate: Math.round(passRate*10)/10 }});
 });
 
+// proctor live polling endpoint — returns latest snapshot per active attempt (fallback when socket fails)
+app.get("/api/proctor/live", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  try {
+    const activeAttempts = db.prepare(`
+      SELECT a.id as attempt_id, a.user_id, a.username, a.exam_id, e.title as exam_title
+      FROM attempts a JOIN exams e ON e.id = a.exam_id
+      WHERE a.status = 'in_progress' AND a.ends_at > ?
+    `).all(Date.now());
+    const results = [];
+    for (const att of activeAttempts) {
+      const snap = db.prepare(`
+        SELECT id, captured_at, file_path FROM proctor_snapshots
+        WHERE attempt_id = ? ORDER BY captured_at DESC LIMIT 1
+      `).get(att.attempt_id);
+      if (snap) {
+        const fname = snap.file_path.split(/[\\/]/).pop();
+        results.push({
+          attemptId: att.attempt_id,
+          userId: att.user_id,
+          username: att.username,
+          examTitle: att.exam_title,
+          ts: snap.captured_at,
+          url: `/api/proctor/snapshot/${att.attempt_id}/${fname}`,
+        });
+      }
+    }
+    res.json(results);
+  } catch (e) {
+    console.error("[proctor/live]", e);
+    res.json([]);
+  }
+});
+
 // proctor snapshots list + file serve
 app.get("/api/proctor/snapshots/:attemptId", requireAuth, (req, res) => {
   const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.attemptId));
@@ -734,8 +767,9 @@ io.use((socket, next) => {
 });
 
 io.on("connection", (socket) => {
+  console.log(`[socket] ${socket.data.username} (${socket.data.role}) connected`);
   socket.on("proctor:watch", (_, ack) => {
-    if (!["super_admin", "subject_admin"].includes(socket.data.role)) return ack?.({ ok:false, error:"Admin only"});
+    if (!["super_admin", "subject_admin", "examiner"].includes(socket.data.role)) return ack?.({ ok:false, error:"Admin only"});
     socket.join("proctor:admin");
     ack?.({ok:true});
   });
@@ -784,7 +818,7 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("disconnect", ()=>{});
+  socket.on("disconnect", ()=>{ console.log(`[socket] ${socket.data.username} disconnected`); });
 });
 
 const PORT = process.env.PORT || 4001;
