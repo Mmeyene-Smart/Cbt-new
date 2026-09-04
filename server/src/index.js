@@ -171,6 +171,55 @@ app.get("/api/exams/my-status", requireAuth, (req, res) => {
   res.json(result);
 });
 
+// Question analytics: per-question % correct for a specific exam (examiner view)
+app.get("/api/exams/:id/question-analytics", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const examId = Number(req.params.id);
+  const questions = db.prepare("SELECT id, prompt, type, options, answer, marks, difficulty, topic FROM questions WHERE exam_id = ? ORDER BY order_index ASC").all(examId);
+  const gradedAttempts = db.prepare("SELECT id FROM attempts WHERE exam_id = ? AND status = 'graded'").all(examId);
+  const totalAttempts = gradedAttempts.length;
+  if (!totalAttempts) return res.json({ questions: questions.map(q => ({ ...q, correctCount: 0, correctPercent: 0, avgMarks: 0 })), totalAttempts: 0 });
+  const attemptIds = gradedAttempts.map(a => a.id);
+  const placeholders = attemptIds.map(() => "?").join(",");
+  const answers = db.prepare(`SELECT question_id, given, is_correct, marks_awarded FROM attempt_answers WHERE attempt_id IN (${placeholders})`).all(...attemptIds);
+  const qStats = {};
+  answers.forEach(a => {
+    if (!qStats[a.question_id]) qStats[a.question_id] = { correctCount: 0, totalMarks: 0, count: 0 };
+    qStats[a.question_id].count++;
+    if (a.is_correct) qStats[a.question_id].correctCount++;
+    qStats[a.question_id].totalMarks += a.marks_awarded;
+  });
+  const result = questions.map(q => {
+    const s = qStats[q.id] || { correctCount: 0, totalMarks: 0, count: 0 };
+    return {
+      ...q,
+      correctCount: s.correctCount,
+      correctPercent: s.count ? Math.round((s.correctCount / s.count) * 100) : 0,
+      avgMarks: s.count ? (s.totalMarks / s.count).toFixed(2) : "0.00",
+    };
+  });
+  res.json({ questions: result, totalAttempts });
+});
+
+// Certificate: generate simple text certificate data for a graded attempt
+app.get("/api/attempts/:id/certificate", requireAuth, (req, res) => {
+  const attempt = db.prepare("SELECT a.*, e.title AS exam_title, e.subject, e.pass_percent FROM attempts a JOIN exams e ON e.id = a.exam_id WHERE a.id = ?").get(Number(req.params.id));
+  if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+  if (attempt.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+  if (!attempt.passed) return res.status(400).json({ error: "Certificate only available for passed exams" });
+  const verificationCode = `CBT-${attempt.id}-${attempt.exam_id}-${Date.now().toString(36).toUpperCase()}`;
+  res.json({
+    student_name: attempt.username,
+    exam_title: attempt.exam_title,
+    subject: attempt.subject,
+    score: attempt.score,
+    total: attempt.total,
+    percent: Math.round(attempt.percent),
+    passed: attempt.passed,
+    date: attempt.submitted_at,
+    verification_code: verificationCode,
+  });
+});
+
 app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
   const title = sanitize(req.body?.title);
   const subject = sanitize(req.body?.subject) || "General";
@@ -463,6 +512,42 @@ app.get("/api/attempts/:id/flags", requireAuth, (req, res) => {
   res.json(flags);
 });
 
+// In-exam chat: send message
+app.post("/api/attempts/:id/messages", requireAuth, (req, res) => {
+  const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.id));
+  if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+  // student can only message their own attempt; examiner/super_admin can message any
+  if (req.user.role === "student" && attempt.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+  const body = String(req.body?.body || "").trim();
+  if (!body || body.length > 500) return res.status(400).json({ error: "Message must be 1-500 characters" });
+  const info = db.prepare("INSERT INTO exam_messages (attempt_id, exam_id, sender_id, sender_role, sender_name, body, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(attempt.id, attempt.exam_id, req.user.id, req.user.role, req.user.username, body, Date.now());
+  const msg = { id: Number(info.lastInsertRowid), attempt_id: attempt.id, sender_id: req.user.id, sender_role: req.user.role, sender_name: req.user.username, body, created_at: Date.now() };
+  // broadcast to proctor wall
+  if (global._io) global._io.to("proctors").emit("chat-message", msg);
+  res.json(msg);
+});
+
+// In-exam chat: get messages for an attempt
+app.get("/api/attempts/:id/messages", requireAuth, (req, res) => {
+  const attempt = db.prepare("SELECT * FROM attempts WHERE id=?").get(Number(req.params.id));
+  if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+  if (req.user.role === "student" && attempt.user_id !== req.user.id) return res.status(403).json({ error: "Forbidden" });
+  const rows = db.prepare("SELECT * FROM exam_messages WHERE attempt_id=? ORDER BY id ASC").all(attempt.id);
+  res.json(rows);
+});
+
+// In-exam chat: get all messages for a student's active attempts (for proctor view)
+app.get("/api/proctor/messages", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const rows = db.prepare(`
+    SELECT m.*, e.title AS exam_title
+    FROM exam_messages m
+    JOIN exams e ON e.id = m.exam_id
+    ORDER BY m.id DESC
+    LIMIT 100
+  `).all();
+  res.json(rows);
+});
+
 // clone an exam with all its questions
 app.post("/api/exams/:id/clone", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
   const srcExam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(req.params.id));
@@ -568,6 +653,53 @@ app.get("/api/results", requireAuth, (req, res) => {
   else rows = db.prepare("SELECT a.id, a.exam_id, a.user_id, a.username, a.score, a.total, a.percent, a.passed, a.submitted_at, e.title AS exam_title FROM attempts a JOIN exams e ON e.id = a.exam_id WHERE a.status='graded' ORDER BY a.submitted_at DESC LIMIT 100").all();
   if (req.user.role !== "admin") rows = rows.filter(r=>r.user_id===req.user.id);
   res.json(rows);
+});
+
+app.get("/api/student/dashboard", requireAuth, (req, res) => {
+  if (req.user.role !== "student") return res.status(403).json({ error: "Students only" });
+  const studentSubjects = req.user.subjects || [];
+  const exams = db.prepare("SELECT id, title, subject, duration_minutes, pass_percent, status, scheduled_start, scheduled_end, negative_marks, (SELECT COUNT(*) FROM questions q WHERE q.exam_id = exams.id) AS question_count FROM exams ORDER BY id DESC").all();
+  const myExams = exams.filter(e => studentSubjects.includes(e.subject));
+  const attempts = db.prepare("SELECT exam_id, score, total, percent, passed, submitted_at, status FROM attempts WHERE user_id = ? ORDER BY submitted_at DESC").all(req.user.id);
+  const examMap = {};
+  myExams.forEach(e => { examMap[e.id] = e; });
+  // Per-subject stats
+  const subjectStats = {};
+  studentSubjects.forEach(s => { subjectStats[s] = { total: 0, passed: 0, bestPercent: 0, avgPercent: 0, exams: 0, attempts: 0, recentScores: [] }; });
+  attempts.forEach(a => {
+    const exam = examMap[a.exam_id];
+    if (!exam) return;
+    const sub = subjectStats[exam.subject];
+    if (!sub) return;
+    sub.attempts++;
+    sub.exams = new Set([...(sub._examIds || []), a.exam_id]).size;
+    sub._examIds = [...(sub._examIds || []), a.exam_id];
+    if (a.status === "graded") {
+      sub.total++;
+      if (a.passed) sub.passed++;
+      if (a.percent > sub.bestPercent) sub.bestPercent = Math.round(a.percent);
+      sub.recentScores.push(Math.round(a.percent));
+    }
+  });
+  // Compute averages
+  Object.values(subjectStats).forEach(s => {
+    s.avgPercent = s.recentScores.length ? Math.round(s.recentScores.reduce((a,b)=>a+b,0) / s.recentScores.length) : 0;
+    s.recentScores = s.recentScores.slice(0, 5);
+    delete s._examIds;
+  });
+  // Overall
+  const gradedAttempts = attempts.filter(a => a.status === "graded");
+  const overall = {
+    totalExams: myExams.length,
+    examsTaken: gradedAttempts.length,
+    examsRemaining: myExams.length - gradedAttempts.length,
+    overallAvg: gradedAttempts.length ? Math.round(gradedAttempts.reduce((a,b)=>a+b.percent,0) / gradedAttempts.length) : 0,
+    overallPassRate: gradedAttempts.length ? Math.round((gradedAttempts.filter(a=>a.passed).length / gradedAttempts.length) * 100) : 0,
+    bestScore: gradedAttempts.length ? Math.round(Math.max(...gradedAttempts.map(a=>a.percent))) : 0,
+  };
+  // Weak topics: exams where percent < 50
+  const weakAttempts = gradedAttempts.filter(a => a.percent < 50).map(a => ({ title: examMap[a.exam_id]?.title || "Unknown", subject: examMap[a.exam_id]?.subject, percent: Math.round(a.percent) }));
+  res.json({ subjects: subjectStats, overall, weakAttempts: weakAttempts.slice(0, 5), studentSubjects });
 });
 
 app.get("/api/results/combined", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {

@@ -597,13 +597,14 @@ function ProctorWall(){
 
 // ===== Student =====
 function StudentShell({user,onLogout}){
-  const [view,setView]=useState("exams");
+  const [view,setView]=useState("dashboard");
   const [examToTake,setExamToTake]=useState(null);
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-white/5 bg-panel/70 backdrop-blur px-6">
         <span className="font-display font-bold text-gradient">University Student Examination Portal</span>
         <div className="flex items-center gap-3">
+          <button onClick={()=>setView("dashboard")} className={`px-3 py-1.5 rounded-lg text-sm ${view==="dashboard"?"bg-white/10":"text-zinc-400"}`}>Dashboard</button>
           <button onClick={()=>setView("exams")} className={`px-3 py-1.5 rounded-lg text-sm ${view==="exams"?"bg-white/10":"text-zinc-400"}`}>Exams</button>
           <button onClick={()=>setView("results")} className={`px-3 py-1.5 rounded-lg text-sm ${view==="results"?"bg-white/10":"text-zinc-400"}`}>My Results</button>
           <span className="text-sm text-zinc-500 hidden md:inline">{user.username}</span>
@@ -611,10 +612,74 @@ function StudentShell({user,onLogout}){
         </div>
       </header>
       <main className="flex-1 p-6 max-w-5xl mx-auto w-full">
+        {view==="dashboard" && <StudentDashboard user={user}/>}
         {view==="exams" && <StudentExams onTake={(exam)=>{setExamToTake(exam); setView("exam");}} />}
         {view==="exam" && examToTake && <ExamPlayer exam={examToTake} user={user} onBack={()=>setView("exams")} />}
         {view==="results" && <StudentResults/>}
       </main>
+    </div>
+  );
+}
+
+function StudentDashboard({user}){
+  const [data,setData]=useState(null);
+  useEffect(()=>{ api("/api/student/dashboard").then(setData); },[]);
+  if(!data) return <div className="glass rounded-2xl p-8 text-center text-zinc-500"><p>Loading dashboard…</p></div>;
+  const {subjects, overall, weakAttempts, studentSubjects} = data;
+  const subEntries = Object.entries(subjects);
+  return (
+    <div className="space-y-4">
+      <div className="glass rounded-2xl p-5">
+        <h3 className="font-semibold mb-1">Welcome back, {user.full_name || user.username}</h3>
+        <p className="text-xs text-zinc-500">Subjects: {studentSubjects.join(", ") || "None registered"}</p>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="glass rounded-2xl p-4 text-center">
+          <p className="text-2xl font-bold">{overall.examsTaken}/{overall.totalExams}</p>
+          <p className="text-xs text-zinc-500 mt-1">Exams Taken</p>
+        </div>
+        <div className="glass rounded-2xl p-4 text-center">
+          <p className="text-2xl font-bold text-emerald-400">{overall.overallAvg}%</p>
+          <p className="text-xs text-zinc-500 mt-1">Average Score</p>
+        </div>
+        <div className="glass rounded-2xl p-4 text-center">
+          <p className="text-2xl font-bold text-blue-400">{overall.overallPassRate}%</p>
+          <p className="text-xs text-zinc-500 mt-1">Pass Rate</p>
+        </div>
+        <div className="glass rounded-2xl p-4 text-center">
+          <p className="text-2xl font-bold text-amber-400">{overall.bestScore}%</p>
+          <p className="text-xs text-zinc-500 mt-1">Best Score</p>
+        </div>
+      </div>
+      {subEntries.length > 0 && (
+        <div className="glass rounded-2xl p-5">
+          <h4 className="font-semibold text-sm mb-3">Performance by Subject</h4>
+          <div className="space-y-3">
+            {subEntries.map(([name, s]) => (
+              <div key={name} className="flex items-center gap-3">
+                <span className="text-sm w-40 shrink-0">{name}</span>
+                <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full transition-all duration-500" style={{width: `${s.avgPercent}%`, backgroundColor: s.avgPercent >= 70 ? "#34d399" : s.avgPercent >= 50 ? "#fbbf24" : "#f87171"}}/>
+                </div>
+                <span className="text-xs text-zinc-400 w-24 text-right">{s.avgPercent}% avg · {s.total} graded</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {weakAttempts.length > 0 && (
+        <div className="glass rounded-2xl p-5">
+          <h4 className="font-semibold text-sm mb-3 text-amber-400">Areas to Improve</h4>
+          <div className="space-y-2">
+            {weakAttempts.map((w,i)=>(
+              <div key={i} className="flex items-center justify-between rounded-xl bg-white/5 px-4 py-2">
+                <span className="text-sm">{w.title}</span>
+                <span className="text-xs text-amber-400 font-medium">{w.percent}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -750,6 +815,30 @@ function ExamPlayer({exam, user, onBack}){
     return ()=>document.removeEventListener("visibilitychange",onVisChange);
   },[started, attempt]);
 
+  // Copy-paste prevention during exam
+  useEffect(()=>{
+    if(!started) return;
+    const preventCopy = (e) => { e.preventDefault(); };
+    const preventContext = (e) => { e.preventDefault(); };
+    const preventKey = (e) => {
+      if((e.ctrlKey || e.metaKey) && ["c","v","x","a"].includes(e.key.toLowerCase())){ e.preventDefault(); }
+    };
+    document.addEventListener("copy", preventCopy);
+    document.addEventListener("paste", preventCopy);
+    document.addEventListener("cut", preventCopy);
+    document.addEventListener("contextmenu", preventContext);
+    document.addEventListener("keydown", preventKey);
+    document.body.style.userSelect = "none";
+    return () => {
+      document.removeEventListener("copy", preventCopy);
+      document.removeEventListener("paste", preventCopy);
+      document.removeEventListener("cut", preventCopy);
+      document.removeEventListener("contextmenu", preventContext);
+      document.removeEventListener("keydown", preventKey);
+      document.body.style.userSelect = "";
+    };
+  },[started]);
+
   useEffect(()=>{
     if(!started || !attempt || camera.state!=="granted") return;
     const s=getSocket();
@@ -837,13 +926,51 @@ function ExamPlayer({exam, user, onBack}){
     const att = result.attempt || result;
     const qs = result.questions || [];
     const correctCount = qs.filter(q=>q.is_correct).length;
+    const [certData, setCertData] = useState(null);
+    useEffect(()=>{
+      if(att.passed) api(`/api/attempts/${att.attemptId || att.id}/certificate`).then(setCertData).catch(()=>{});
+    },[att.passed]);
+    const downloadCert=()=>{
+      if(!certData) return;
+      const html = `<!DOCTYPE html><html><head><style>
+        body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#111;font-family:Georgia,serif;}
+        .cert{width:800px;padding:60px;background:#fff;color:#1a1a2e;text-align:center;border:3px solid #c9a227;}
+        .cert h1{font-size:28px;color:#c9a227;margin:0 0 8px;letter-spacing:2px;}
+        .cert h2{font-size:16px;color:#666;margin:0 0 30px;font-weight:normal;}
+        .cert .name{font-size:32px;font-weight:bold;color:#1a1a2e;margin:20px 0;border-bottom:2px solid #c9a227;padding-bottom:10px;display:inline-block;}
+        .cert .detail{font-size:14px;color:#444;margin:8px 0;}
+        .cert .score{font-size:20px;color:#c9a227;font-weight:bold;margin:20px 0;}
+        .cert .footer{margin-top:40px;font-size:11px;color:#999;}
+        .cert .code{font-family:monospace;font-size:12px;color:#888;margin-top:10px;}
+      </style></head><body><div class="cert">
+        <h1>Certificate of Achievement</h1><h2>University Student Examination Portal</h2>
+        <p class="detail">This certifies that</p><div class="name">${certData.student_name}</div>
+        <p class="detail">has successfully passed the examination</p>
+        <p class="detail" style="font-size:18px;font-weight:bold;color:#1a1a2e;">${certData.exam_title}</p>
+        <p class="detail">Subject: ${certData.subject}</p>
+        <div class="score">${certData.score}/${certData.total} — ${certData.percent}%</div>
+        <p class="detail">Date: ${new Date(certData.date).toLocaleDateString()}</p>
+        <div class="footer">
+          <p>University Student Examination Portal — CBT Platform</p>
+          <p class="code">Verification: ${certData.verification_code}</p>
+        </div>
+      </div></body></html>`;
+      const blob = new Blob([html], {type:"text/html"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `certificate-${certData.verification_code}.html`; a.click();
+      URL.revokeObjectURL(url);
+    };
     return (
       <div className="space-y-4">
         <div className="glass rounded-2xl p-8 text-center">
           <h3 className="font-display text-2xl font-bold">{att.passed ? <span className="text-emerald-400 flex items-center justify-center gap-2"><CheckCircle className="h-6 w-6"/> Passed</span> : <span className="text-rose-400 flex items-center justify-center gap-2"><XCircle className="h-6 w-6"/> Failed</span>}</h3>
           <p className="mt-2 text-3xl font-bold">{att.score} / {att.total} — {Math.round(att.percent)}%</p>
           <p className="mt-1 text-sm text-zinc-500">{correctCount}/{qs.length} correct · {exam.title}</p>
-          <button onClick={onBack} className="mt-6 rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm hover:bg-white/10">Back to exams</button>
+          <div className="mt-6 flex gap-3 justify-center">
+            <button onClick={onBack} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm hover:bg-white/10">Back to exams</button>
+            {att.passed && certData && <button onClick={downloadCert} className="grad-bg rounded-xl px-5 py-2 text-sm font-semibold text-night">Download Certificate</button>}
+          </div>
         </div>
         {qs.length > 0 && (
           <div className="space-y-3">
@@ -957,6 +1084,23 @@ function ExamPlayer({exam, user, onBack}){
   const given = answers[q.id] || [];
   const answeredCount = questions.filter(qq => answers[qq.id] && answers[qq.id].length > 0).length;
   const flaggedCount = Object.keys(flags).length;
+  // Chat state
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMsgs, setChatMsgs] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatUnread, setChatUnread] = useState(0);
+  useEffect(()=>{
+    if(!attempt) return;
+    api(`/api/attempts/${attempt.attemptId}/messages`).then(d=> setChatMsgs(d)).catch(()=>{});
+  },[attempt]);
+  const sendChat=async()=>{
+    if(!chatInput.trim()||!attempt) return;
+    try{
+      const msg = await api(`/api/attempts/${attempt.attemptId}/messages`,{method:"POST", body:{body:chatInput.trim()}});
+      setChatMsgs(m=>[...m, msg]);
+      setChatInput("");
+    }catch(e){ alert(e.message); }
+  };
   return (
     <div className="grid lg:grid-cols-[1fr_280px] gap-6">
       <div className="glass rounded-2xl p-5">
@@ -1045,6 +1189,27 @@ function ExamPlayer({exam, user, onBack}){
                 const qi = questions.indexOf(qq);
                 return <button key={qid} onClick={()=>setIdx(qi)} className="w-full text-left text-xs text-amber-300 hover:text-amber-200 truncate py-0.5">Q{qi+1}: {qq.prompt.slice(0,40)}…</button>;
               })}
+            </div>
+          </div>
+        )}
+        <button onClick={()=>setChatOpen(o=>!o)} className={`w-full rounded-xl px-4 py-2.5 text-sm font-medium border transition flex items-center justify-between ${chatOpen?"border-blue-500/30 bg-blue-500/10 text-blue-300":"border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10"}`}>
+          <span className="flex items-center gap-2"><MessageSquare className="h-4 w-4"/> Chat with Proctor</span>
+          {chatUnread > 0 && <span className="h-5 w-5 rounded-full bg-blue-500 text-white text-xs flex items-center justify-center">{chatUnread}</span>}
+        </button>
+        {chatOpen && (
+          <div className="glass rounded-2xl p-4 flex flex-col" style={{maxHeight: 280}}>
+            <div className="flex-1 overflow-y-auto space-y-2 mb-2 text-xs">
+              {!chatMsgs.length && <p className="text-zinc-600">No messages yet.</p>}
+              {chatMsgs.map(m=>(
+                <div key={m.id} className={`rounded-lg px-3 py-2 ${m.sender_role==="student"?"bg-blue-500/10 ml-4":"bg-white/5 mr-4"}`}>
+                  <p className="text-zinc-500 mb-0.5">{m.sender_name} <span className="text-zinc-600">· {new Date(m.created_at).toLocaleTimeString()}</span></p>
+                  <p className="text-zinc-300">{m.body}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendChat()} placeholder="Type a message…" className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-blue-500/50"/>
+              <button onClick={sendChat} disabled={!chatInput.trim()} className="rounded-lg bg-blue-500/20 text-blue-300 px-3 py-1.5 text-xs font-medium hover:bg-blue-500/30 disabled:opacity-40">Send</button>
             </div>
           </div>
         )}

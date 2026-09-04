@@ -92,6 +92,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details TEXT,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS exam_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attempt_id INTEGER NOT NULL,
+  exam_id INTEGER NOT NULL,
+  sender_id INTEGER NOT NULL,
+  sender_role TEXT NOT NULL,
+  sender_name TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tab_violations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   attempt_id INTEGER NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
