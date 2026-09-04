@@ -179,6 +179,7 @@ addColumnIfMissing("questions", "explanation", "TEXT");
 addColumnIfMissing("exams", "negative_marks", "REAL NOT NULL DEFAULT 0");
 addColumnIfMissing("attempts", "option_seed", "TEXT");
 addColumnIfMissing("exams", "randomize_options", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("exams", "exam_password", "TEXT");
 
 // role CHECK constraint rebuild: SQLite cannot ALTER a CHECK, so the table is
 // recreated. Old roles map as: username 'admin' -> super_admin, any other

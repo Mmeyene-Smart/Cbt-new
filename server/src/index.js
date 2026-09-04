@@ -297,10 +297,11 @@ app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", 
   const randomizeQuestions = req.body?.randomize_questions ? 1 : 0;
   const randomizeOptions = req.body?.randomize_options ? 1 : 0;
   const negativeMarks = Math.max(0, Math.min(1, Number(req.body?.negative_marks) || 0));
+  const examPassword = req.body?.exam_password ? sanitize(req.body.exam_password).slice(0, 50) : null;
   if (!title || title.length < 3 || title.length > 120) return res.status(400).json({ error: "Title must be 3-120 characters" });
   if (/[<>]/.test(title) || /[<>]/.test(subject)) return res.status(400).json({ error: "Invalid characters in title/subject" });
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
-  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, randomize_options, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, req.user.id, negativeMarks, scheduledStart, scheduledEnd, randomizeQuestions, randomizeOptions, Date.now());
+  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, randomize_options, exam_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, req.user.id, negativeMarks, scheduledStart, scheduledEnd, randomizeQuestions, randomizeOptions, examPassword, Date.now());
   const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(info.lastInsertRowid));
   res.json(exam);
 });
@@ -427,6 +428,11 @@ app.post("/api/attempts/start", requireAuth, requireRole("student"), (req, res) 
     }
     if (exam.scheduled_end && now > exam.scheduled_end) {
       return res.status(400).json({ error: `Exam has expired. Ended at ${new Date(exam.scheduled_end).toLocaleString()}` });
+    }
+    // exam password enforcement
+    if (exam.exam_password) {
+      const provided = String(req.body?.exam_password || "");
+      if (provided !== exam.exam_password) return res.status(400).json({ error: "Incorrect exam password" });
     }
     // allow concurrent same-account logins to have separate attempts if they explicitly want a new one
     const existing = db.prepare("SELECT * FROM attempts WHERE exam_id=? AND user_id=? AND status='in_progress' ORDER BY started_at DESC LIMIT 1").get(examId, req.user.id);
@@ -625,6 +631,104 @@ app.get("/api/proctor/messages", requireAuth, requireRole("super_admin", "subjec
     LIMIT 100
   `).all();
   res.json(rows);
+});
+
+// ===== Exam Attendance Sheet =====
+app.get("/api/exams/:id/attendance", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const examId = Number(req.params.id);
+  const exam = db.prepare("SELECT title, subject FROM exams WHERE id=?").get(examId);
+  if (!exam) return res.status(404).json({ error: "Exam not found" });
+  const rows = db.prepare(`
+    SELECT a.id, a.username, a.status, a.score, a.total, a.percent, a.passed, a.started_at, a.submitted_at, a.camera_consent_at,
+           u.full_name, u.student_code
+    FROM attempts a LEFT JOIN users u ON u.id = a.user_id
+    WHERE a.exam_id = ? ORDER BY a.started_at ASC
+  `).all(examId);
+  res.json({ exam, attempts: rows });
+});
+
+// ===== Bulk Student Enrollment (CSV) =====
+app.post("/api/students/enroll", requireAuth, requireRole("super_admin"), (req, res) => {
+  const entries = req.body?.entries; // [{username, subjects: ["Math","CS"]}]
+  if (!Array.isArray(entries) || !entries.length) return res.status(400).json({ error: "entries[] required" });
+  let updated = 0;
+  const upd = db.prepare("UPDATE users SET subjects = ? WHERE username = ? COLLATE NOCASE AND role = 'student'");
+  for (const e of entries) {
+    if (!e.username || !Array.isArray(e.subjects)) continue;
+    const existing = db.prepare("SELECT subjects FROM users WHERE username = ? COLLATE NOCASE AND role = 'student'").get(e.username);
+    if (!existing) continue;
+    let current = [];
+    try { current = existing.subjects ? JSON.parse(existing.subjects) : []; } catch {}
+    const merged = [...new Set([...current, ...e.subjects])];
+    upd.run(JSON.stringify(merged), e.username);
+    updated++;
+  }
+  res.json({ updated });
+});
+
+// ===== Exam Statistics =====
+app.get("/api/exams/:id/stats", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
+  const examId = Number(req.params.id);
+  const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(examId);
+  if (!exam) return res.status(404).json({ error: "Exam not found" });
+  const attempts = db.prepare("SELECT * FROM attempts WHERE exam_id=? AND status='graded'").all(examId);
+  const questions = db.prepare("SELECT * FROM questions WHERE exam_id=? ORDER BY order_index").all(examId);
+  const totalAttempts = attempts.length;
+  if (!totalAttempts) return res.json({ exam, totalAttempts: 0, passRate: 0, avgPercent: 0, avgTime: 0, scoreDistribution: [], questionStats: [], topStudents: [] });
+  const passed = attempts.filter(a => a.passed).length;
+  const avgPercent = Math.round(attempts.reduce((s, a) => s + a.percent, 0) / totalAttempts);
+  const avgTime = Math.round(attempts.filter(a => a.submitted_at).reduce((s, a) => s + (a.submitted_at - a.started_at), 0) / totalAttempts / 60000);
+  // Score distribution (buckets of 10)
+  const buckets = Array(10).fill(0);
+  attempts.forEach(a => { const b = Math.min(9, Math.floor(a.percent / 10)); buckets[b]++; });
+  const scoreDistribution = buckets.map((count, i) => ({ range: `${i*10}-${i*10+9}%`, count }));
+  // Question stats
+  const answerMap = {};
+  db.prepare(`SELECT question_id, is_correct, marks_awarded FROM attempt_answers WHERE attempt_id IN (SELECT id FROM attempts WHERE exam_id=? AND status='graded')`).all(examId).forEach(a => {
+    if (!answerMap[a.question_id]) answerMap[a.question_id] = { correct: 0, total: 0, totalMarks: 0 };
+    answerMap[a.question_id].total++;
+    if (a.is_correct) answerMap[a.question_id].correct++;
+    answerMap[a.question_id].totalMarks += a.marks_awarded;
+  });
+  const questionStats = questions.map(q => {
+    const s = answerMap[q.id] || { correct: 0, total: 0, totalMarks: 0 };
+    return { id: q.id, prompt: q.prompt.slice(0, 80), type: q.type, difficulty: q.difficulty, topic: q.topic, correctPercent: s.total ? Math.round((s.correct / s.total) * 100) : 0, avgMarks: s.total ? (s.totalMarks / s.total).toFixed(2) : "0", responses: s.total };
+  });
+  // Top students
+  const topStudents = attempts.sort((a, b) => b.percent - a.percent).slice(0, 10).map(a => ({ username: a.username, score: a.score, total: a.total, percent: Math.round(a.percent) }));
+  res.json({ exam, totalAttempts, passRate: Math.round((passed / totalAttempts) * 100), avgPercent, avgTime, scoreDistribution, questionStats, topStudents });
+});
+
+// ===== Bulk Student Enrollment via CSV file upload =====
+app.post("/api/students/enroll/csv", requireAuth, requireRole("super_admin"), upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "CSV file required" });
+    const content = req.file.buffer.toString("utf-8");
+    const lines = content.split(/\r?\n/).filter(l => l.trim());
+    const entries = [];
+    for (const line of lines.slice(1)) { // skip header
+      const parts = line.split(",").map(s => s.trim().replace(/^"|"$/g, ""));
+      if (parts.length >= 2 && parts[0] && parts[1]) {
+        entries.push({ username: parts[0], subjects: parts[1].split(";").map(s => s.trim()).filter(Boolean) });
+      }
+    }
+    if (!entries.length) return res.status(400).json({ error: "No valid entries found in CSV. Format: username,subject1;subject2" });
+    let updated = 0;
+    const upd = db.prepare("UPDATE users SET subjects = ? WHERE username = ? COLLATE NOCASE AND role = 'student'");
+    for (const e of entries) {
+      const existing = db.prepare("SELECT subjects FROM users WHERE username = ? COLLATE NOCASE AND role = 'student'").get(e.username);
+      if (!existing) continue;
+      let current = [];
+      try { current = existing.subjects ? JSON.parse(existing.subjects) : []; } catch {}
+      const merged = [...new Set([...current, ...e.subjects])];
+      upd.run(JSON.stringify(merged), e.username);
+      updated++;
+    }
+    res.json({ updated, total: entries.length });
+  } catch (e) {
+    console.error("CSV enrollment failed", e);
+    res.status(500).json({ error: "CSV parse failed" });
+  }
 });
 
 // clone an exam with all its questions

@@ -4,7 +4,8 @@ import { getUser, setSession, clearSession, api, getToken, apiUrl } from "./lib/
 import { getSocket, destroySocket } from "./lib/socket.js";
 import useCamera from "./hooks/useCamera.js";
 import useScreenShare from "./hooks/useScreenShare.js";
-import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, Monitor, AlertTriangle, Sun, Moon, Shield, FileText } from "lucide-react";
+import { LogOut, Users, BookOpen, BarChart3, Video, Plus, Eye, Clock, CheckCircle, XCircle, Camera, Monitor, AlertTriangle, Sun, Moon, Shield, FileText, ChevronLeft, Trash2, MessageSquare, LayoutDashboard, ClipboardList, GraduationCap, Search, Download } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 export default function App(){
   const [user,setUser]=useState(getUser());
@@ -152,51 +153,86 @@ function ExamTemplates({user}){
 function AdminShell({user,onLogout}){
   const [tab,setTab]=useState("dashboard");
   const [theme,setTheme]=useState(()=> localStorage.getItem("cbt.theme") || "light");
+  const [mobileOpen,setMobileOpen]=useState(false);
   const isAdmin = ["super_admin","subject_admin"].includes(user.role);
   const isSuperAdmin = user.role === "super_admin";
-  const allTabs = ["dashboard","exams","bank","templates","students","results","proctor","admins","audit"];
-  const tabs = allTabs.filter(t => {
-    if (t === "admins" || t === "audit") return isSuperAdmin;
-    return true;
-  });
+  const tabConfig = [
+    {id:"dashboard", icon:LayoutDashboard, label:"Dashboard"},
+    {id:"exams", icon:BookOpen, label:"Exams"},
+    {id:"bank", icon:FileText, label:"Bank"},
+    {id:"templates", icon:ClipboardList, label:"Templates"},
+    {id:"students", icon:Users, label:"Students"},
+    {id:"results", icon:BarChart3, label:"Results"},
+    {id:"proctor", icon:Video, label:"Proctor"},
+    {id:"admins", icon:Shield, label:"Admins", superOnly:true},
+    {id:"audit", icon:Eye, label:"Audit", superOnly:true},
+  ];
+  const tabs = tabConfig.filter(t => !t.superOnly || isSuperAdmin);
   useEffect(()=>{
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("cbt.theme", theme);
   },[theme]);
-  return (
-    <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-white/5 bg-panel/70 backdrop-blur px-6">
-        <span className="font-display font-bold text-gradient">University Examination Administration</span>
-        <div className="flex items-center gap-3">
-          <nav className="hidden md:flex gap-2 text-sm">
-            {tabs.map(t=>(
-              <button key={t} onClick={()=>setTab(t)} className={`px-3 py-1.5 rounded-lg capitalize ${tab===t?"bg-white/10 text-white":"text-zinc-400 hover:text-white"}`}>{t}</button>
-            ))}
-          </nav>
-          <span className="text-xs rounded-full bg-white/10 px-2 py-0.5 text-zinc-400 capitalize">{user.role?.replace("_"," ")}</span>
-          <span className="text-sm text-zinc-400">{user.username}</span>
-          <button onClick={()=>setTheme(theme==="light"?"dark":"light")} aria-label="Toggle theme" title={`Switch to ${theme==="light"?"dark":"light"} mode`} className="p-2 rounded-lg hover:bg-white/10">
-            {theme==="light" ? <Moon className="h-4 w-4"/> : <Sun className="h-4 w-4"/>}
-          </button>
-          <button onClick={onLogout} className="p-2 rounded-lg hover:bg-white/10"><LogOut className="h-4 w-4"/></button>
-        </div>
-      </header>
-      <div className="md:hidden flex gap-2 p-3 border-b border-white/5 overflow-auto">
-        {tabs.map(t=>(
-          <button key={t} onClick={()=>setTab(t)} className={`px-3 py-1.5 rounded-lg text-sm capitalize shrink-0 ${tab===t?"bg-white/10 text-white":"text-zinc-400"}`}>{t}</button>
-        ))}
+  const SidebarContent = ({vertical}) => (
+    <div className={`flex flex-col ${vertical?"h-full":"h-full"}`}>
+      <div className="p-4 border-b border-white/5">
+        <span className="font-display font-bold text-gradient text-sm">CBT Admin</span>
       </div>
-      <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
-        {tab==="dashboard" && <AdminDashboard user={user}/>}
-        {tab==="exams" && <ExamsAdmin user={user}/>}
-        {tab==="bank" && <QuestionBank user={user}/>}
-        {tab==="templates" && <ExamTemplates user={user}/>}
-        {tab==="students" && <StudentsAdmin user={user}/>}
-        {tab==="results" && <ResultsAdmin user={user}/>}
-        {tab==="proctor" && <ProctorWall/>}
-        {tab==="admins" && isSuperAdmin && <AdminsAdmin user={user}/>}
-        {tab==="audit" && isSuperAdmin && <AuditLog/>}
-      </main>
+      <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+        {tabs.map(t=>{
+          const Icon = t.icon;
+          const active = tab===t.id;
+          return (
+            <button key={t.id} onClick={()=>{setTab(t.id); setMobileOpen(false);}}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition ${active?"bg-white/10 text-white font-medium":"text-zinc-400 hover:bg-white/5 hover:text-zinc-200"}`}>
+              <Icon className="h-4.5 w-4.5 shrink-0"/>
+              <span className="truncate">{t.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+      <div className="p-3 border-t border-white/5 space-y-2">
+        <div className="flex items-center gap-2 px-2">
+          <span className="text-xs rounded-full bg-white/10 px-2 py-0.5 text-zinc-400 capitalize">{user.role?.replace("_"," ")}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={()=>setTheme(theme==="light"?"dark":"light")} className="p-2 rounded-lg hover:bg-white/10" title={`Switch to ${theme==="light"?"dark":"light"} mode`}>
+            {theme==="light" ? <Moon className="h-4 w-4 text-zinc-400"/> : <Sun className="h-4 w-4 text-zinc-400"/>}
+          </button>
+          <span className="text-xs text-zinc-500 flex-1 truncate">{user.username}</span>
+          <button onClick={onLogout} className="p-2 rounded-lg hover:bg-white/10"><LogOut className="h-4 w-4 text-zinc-400"/></button>
+        </div>
+      </div>
+    </div>
+  );
+  return (
+    <div className="min-h-screen flex">
+      <aside className="hidden md:flex w-56 flex-col border-r border-white/5 bg-panel/80 backdrop-blur sticky top-0 h-screen">
+        <SidebarContent/>
+      </aside>
+      {mobileOpen && <div className="fixed inset-0 z-50 md:hidden"><div className="absolute inset-0 bg-black/60" onClick={()=>setMobileOpen(false)}/><aside className="absolute left-0 top-0 bottom-0 w-64 bg-panel border-r border-white/5"><SidebarContent vertical/></aside></div>}
+      <div className="flex-1 flex flex-col min-h-screen">
+        <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-white/5 bg-panel/70 backdrop-blur px-4 md:px-6">
+          <div className="flex items-center gap-3">
+            <button onClick={()=>setMobileOpen(true)} className="md:hidden p-2 rounded-lg hover:bg-white/10"><BookOpen className="h-5 w-5"/></button>
+            <span className="font-display font-bold text-gradient hidden sm:inline">University Examination Administration</span>
+            <span className="font-display font-bold text-gradient sm:hidden">CBT Admin</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-zinc-500 hidden md:inline">{user.username}</span>
+          </div>
+        </header>
+        <main className="flex-1 p-4 md:p-6 max-w-7xl w-full">
+          {tab==="dashboard" && <AdminDashboard user={user}/>}
+          {tab==="exams" && <ExamsAdmin user={user}/>}
+          {tab==="bank" && <QuestionBank user={user}/>}
+          {tab==="templates" && <ExamTemplates user={user}/>}
+          {tab==="students" && <StudentsAdmin user={user}/>}
+          {tab==="results" && <ResultsAdmin user={user}/>}
+          {tab==="proctor" && <ProctorWall/>}
+          {tab==="admins" && isSuperAdmin && <AdminsAdmin user={user}/>}
+          {tab==="audit" && isSuperAdmin && <AuditLog/>}
+        </main>
+      </div>
     </div>
   );
 }
@@ -244,6 +280,7 @@ function ExamsAdmin({user}){
   const [title,setTitle]=useState(""); const [subject,setSubject]=useState("General"); const [duration,setDuration]=useState(15);
   const [schedStart,setSchedStart]=useState(""); const [schedEnd,setSchedEnd]=useState(""); const [randomize,setRandomize]=useState(false); const [randomizeOptions,setRandomizeOptions]=useState(false);
   const [negativeMarks,setNegativeMarks]=useState(0);
+  const [examPassword,setExamPassword]=useState("");
   const [selected,setSelected]=useState(null); const [qs,setQs]=useState([]);
   const [qPrompt,setQPrompt]=useState(""); const [qOptions,setQOptions]=useState("A,B,C,D"); const [qAnswer,setQAnswer]=useState("A"); const [qType,setQType]=useState("mcq");
   const [qDifficulty,setQDifficulty]=useState(""); const [qTopic,setQTopic]=useState(""); const [qExplanation,setQExplanation]=useState("");
@@ -251,11 +288,11 @@ function ExamsAdmin({user}){
   useEffect(()=>{load();},[load]);
   const create=async(e)=>{
     e.preventDefault();
-    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize, randomize_options: randomizeOptions, negative_marks: Number(negativeMarks)};
+    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize, randomize_options: randomizeOptions, negative_marks: Number(negativeMarks), exam_password: examPassword||undefined};
     if(schedStart) body.scheduled_start = new Date(schedStart).getTime();
     if(schedEnd) body.scheduled_end = new Date(schedEnd).getTime();
     await api("/api/exams",{method:"POST", body});
-    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); setRandomizeOptions(false); setNegativeMarks(0); load();
+    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); setRandomizeOptions(false); setNegativeMarks(0); setExamPassword(""); load();
   };
   const cloneExam=async(id)=>{
     if(!confirm("Clone this exam with all its questions?")) return;
@@ -326,12 +363,16 @@ function ExamsAdmin({user}){
               <input type="number" step="0.05" min="0" max="1" value={negativeMarks} onChange={e=>setNegativeMarks(e.target.value)} className="w-16 rounded-xl border border-white/10 bg-night/60 px-2 py-1.5 text-xs outline-none"/>
             </div>
           </div>
+          <input value={examPassword} onChange={e=>setExamPassword(e.target.value)} placeholder="Exam password (optional)" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
           <button className="grad-bg w-full rounded-xl py-2 font-semibold text-night">Create</button>
         </form>
         <div className="glass rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
             <h4 className="font-semibold text-sm">Exams</h4>
-            <button onClick={()=>exportResults()} className="text-xs text-zinc-400 hover:text-white border border-white/10 rounded-lg px-2 py-1">Export Excel</button>
+            <div className="flex gap-1">
+              {selected && <button onClick={()=>window.open(apiUrl(`/api/exams/${selected.id}/attendance`),"_blank")} className="text-xs text-zinc-400 hover:text-white border border-white/10 rounded-lg px-2 py-1">Attendance</button>}
+              <button onClick={()=>exportResults()} className="text-xs text-zinc-400 hover:text-white border border-white/10 rounded-lg px-2 py-1">Export Excel</button>
+            </div>
           </div>
           <ul className="space-y-2">
             {exams.map(e=>{
@@ -438,29 +479,70 @@ function ExamsAdmin({user}){
 
 function StudentsAdmin({user}){
   const [students,setStudents]=useState([]);
+  const [bulkSubjects,setBulkSubjects]=useState("");
+  const [bulkFile,setBulkFile]=useState(null);
+  const [enrollResult,setEnrollResult]=useState(null);
   useEffect(()=>{ api("/api/students").then(setStudents).catch(()=>{}); },[]);
+  const bulkEnroll=async()=>{
+    if(!bulkFile) return;
+    const text = await bulkFile.text();
+    const lines = text.split(/\r?\n/).filter(l=>l.trim());
+    const entries = lines.slice(1).map(l=>{
+      const parts = l.split(",").map(s=>s.trim().replace(/^"|"$/g,""));
+      return parts.length>=2 ? {username:parts[0], subjects:parts[1].split(";").map(s=>s.trim()).filter(Boolean)} : null;
+    }).filter(Boolean);
+    if(!entries.length) return alert("No valid entries in CSV. Format: username,subject1;subject2");
+    const d = await api("/api/students/enroll",{method:"POST", body:{entries}});
+    setEnrollResult(d);
+    api("/api/students").then(setStudents);
+  };
+  const bulkEnrollSimple=async()=>{
+    if(!bulkSubjects.trim()) return alert("Enter subjects");
+    const subs = bulkSubjects.split(",").map(s=>s.trim()).filter(Boolean);
+    const entries = students.map(s=>({username:s.username, subjects:subs}));
+    const d = await api("/api/students/enroll",{method:"POST", body:{entries}});
+    setEnrollResult(d);
+    api("/api/students").then(setStudents);
+  };
   return (
-    <div className="glass rounded-2xl p-5">
-      <h3 className="font-semibold flex items-center gap-2"><Users className="h-4 w-4"/> Students ({students.length})</h3>
-      <div className="mt-4 overflow-auto">
-        <table className="w-full text-sm">
-          <thead className="text-xs text-zinc-500"><tr><th className="text-left p-2">Username</th><th className="text-left p-2">Full name</th><th className="text-left p-2">Code</th><th className="text-left p-2">Subjects</th></tr></thead>
-          <tbody>{students.map(s=>(
-            <tr key={s.id} className="border-t border-white/5"><td className="p-2">{s.username}</td><td className="p-2">{s.full_name}</td><td className="p-2 text-zinc-500">{s.student_code}</td><td className="p-2"><div className="flex flex-wrap gap-1 max-w-[280px]">{(s.subjects||[]).map(sub=>(<span key={sub} className="rounded-md bg-white/5 px-2 py-0.5 text-xs text-zinc-400 ring-1 ring-white/10">{sub}</span>))}{!(s.subjects||[]).length && <span className="text-xs text-zinc-600">—</span>}</div></td></tr>
-          ))}</tbody>
-        </table>
+    <div className="space-y-4">
+      <div className="glass rounded-2xl p-5">
+        <h3 className="font-semibold flex items-center gap-2"><Users className="h-4 w-4"/> Students ({students.length})</h3>
+        <div className="mt-4 overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="text-xs text-zinc-500"><tr><th className="text-left p-2">Username</th><th className="text-left p-2">Full name</th><th className="text-left p-2">Code</th><th className="text-left p-2">Subjects</th></tr></thead>
+            <tbody>{students.map(s=>(
+              <tr key={s.id} className="border-t border-white/5"><td className="p-2">{s.username}</td><td className="p-2">{s.full_name}</td><td className="p-2 text-zinc-500">{s.student_code}</td><td className="p-2"><div className="flex flex-wrap gap-1 max-w-[280px]">{(s.subjects||[]).map(sub=>(<span key={sub} className="rounded-md bg-white/5 px-2 py-0.5 text-xs text-zinc-400 ring-1 ring-white/10">{sub}</span>))}{!(s.subjects||[]).length && <span className="text-xs text-zinc-600">—</span>}</div></td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </div>
+      <div className="glass rounded-2xl p-5">
+        <h3 className="font-semibold mb-3">Bulk Enrollment</h3>
+        <p className="text-xs text-zinc-500 mb-3">Add subjects to all students or upload a CSV (format: <code>username,subject1;subject2</code>)</p>
+        <div className="flex gap-2 mb-3">
+          <input value={bulkSubjects} onChange={e=>setBulkSubjects(e.target.value)} placeholder="Subjects (comma-sep) for ALL students" className="flex-1 rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          <button onClick={bulkEnrollSimple} disabled={!bulkSubjects.trim()} className="grad-bg rounded-xl px-4 py-2 text-sm font-semibold text-night disabled:opacity-50">Enroll All</button>
+        </div>
+        <div className="flex gap-2">
+          <input type="file" accept=".csv" onChange={e=>setBulkFile(e.target.files?.[0]||null)} className="flex-1 text-sm text-zinc-400 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-white/10 file:text-zinc-300 hover:file:bg-white/20"/>
+          <button onClick={bulkEnroll} disabled={!bulkFile} className="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50">Upload CSV</button>
+        </div>
+        {enrollResult && <p className="mt-2 text-sm text-emerald-400">Updated {enrollResult.updated} students</p>}
       </div>
     </div>
   );
 }
 
 function ResultsAdmin({user}){
-  const [exams,setExams]=useState([]); const [selected,setSelected]=useState(""); const [rows,setRows]=useState([]); const [combined,setCombined]=useState(null);
+  const [exams,setExams]=useState([]); const [selected,setSelected]=useState(""); const [rows,setRows]=useState([]); const [combined,setCombined]=useState(null); const [stats,setStats]=useState(null);
   useEffect(()=>{ api("/api/exams").then(setExams); api("/api/results").then(setRows); },[]);
   const loadExam = async(id)=>{
     setSelected(id);
     const data=await api(`/api/results?examId=${id}`);
     setRows(data);
+    setStats(null);
+    if(id) api(`/api/exams/${id}/stats`).then(setStats).catch(()=>{});
   };
   const loadCombined=async()=>{
     if(!exams.length) return;
@@ -495,6 +577,59 @@ function ResultsAdmin({user}){
       {combined && (
         <div className="glass rounded-2xl p-4">
           <p className="text-sm font-semibold">Combined — {combined.stats.total} attempts · Avg {combined.stats.avgPercent}% · Pass {combined.stats.passRate}%</p>
+        </div>
+      )}
+      {stats && stats.totalAttempts > 0 && (
+        <div className="glass rounded-2xl p-5 space-y-4">
+          <h3 className="font-semibold text-sm">Exam Statistics — {stats.exam.title}</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-xl bg-white/5 p-3 text-center"><p className="text-xl font-bold">{stats.totalAttempts}</p><p className="text-xs text-zinc-500">Attempts</p></div>
+            <div className="rounded-xl bg-white/5 p-3 text-center"><p className="text-xl font-bold text-emerald-400">{stats.passRate}%</p><p className="text-xs text-zinc-500">Pass Rate</p></div>
+            <div className="rounded-xl bg-white/5 p-3 text-center"><p className="text-xl font-bold">{stats.avgPercent}%</p><p className="text-xs text-zinc-500">Average</p></div>
+            <div className="rounded-xl bg-white/5 p-3 text-center"><p className="text-xl font-bold">{stats.avgTime}m</p><p className="text-xs text-zinc-500">Avg Time</p></div>
+          </div>
+          {stats.scoreDistribution && (
+            <div>
+              <p className="text-xs text-zinc-500 mb-2">Score Distribution</p>
+              <div className="flex items-end gap-1 h-20">
+                {stats.scoreDistribution.map((b,i)=>(
+                  <div key={i} className="flex-1 flex flex-col items-center">
+                    <div className="w-full bg-[var(--a1)]/30 rounded-t" style={{height: `${stats.totalAttempts ? (b.count/stats.totalAttempts)*100 : 0}%`, minHeight: b.count?4:0}}/>
+                    <span className="text-[10px] text-zinc-600 mt-1">{b.range.split("-")[0]}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {stats.questionStats && stats.questionStats.length > 0 && (
+            <div>
+              <p className="text-xs text-zinc-500 mb-2">Question Analysis ({stats.questionStats.length} questions)</p>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {stats.questionStats.map((q,i)=>(
+                  <div key={q.id} className="flex items-center gap-3 text-xs rounded-lg bg-white/5 px-3 py-1.5">
+                    <span className="text-zinc-500 w-6">Q{i+1}</span>
+                    <span className="flex-1 truncate">{q.prompt}</span>
+                    <span className={`px-1.5 py-0.5 rounded ${q.correctPercent>=70?"bg-emerald-500/20 text-emerald-300":q.correctPercent>=40?"bg-amber-500/20 text-amber-300":"bg-rose-500/20 text-rose-300"}`}>{q.correctPercent}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {stats.topStudents && stats.topStudents.length > 0 && (
+            <div>
+              <p className="text-xs text-zinc-500 mb-2">Top Students</p>
+              <div className="space-y-1">
+                {stats.topStudents.map((s,i)=>(
+                  <div key={i} className="flex items-center gap-3 text-xs rounded-lg bg-white/5 px-3 py-1.5">
+                    <span className="text-zinc-500 w-6">#{i+1}</span>
+                    <span className="flex-1">{s.username}</span>
+                    <span className="text-zinc-400">{s.score}/{s.total}</span>
+                    <span className="font-medium">{s.percent}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <div className="glass rounded-2xl p-4 overflow-auto">
@@ -765,10 +900,12 @@ function StudentShell({user,onLogout}){
 
 function StudentDashboard({user}){
   const [data,setData]=useState(null);
-  useEffect(()=>{ api("/api/student/dashboard").then(setData); },[]);
+  const [history,setHistory]=useState([]);
+  useEffect(()=>{ api("/api/student/dashboard").then(setData); api("/api/results").then(setHistory).catch(()=>{}); },[]);
   if(!data) return <div className="glass rounded-2xl p-8 text-center text-zinc-500"><p>Loading dashboard…</p></div>;
   const {subjects, overall, weakAttempts, studentSubjects} = data;
   const subEntries = Object.entries(subjects);
+  const chartData = history.slice().reverse().map((r,i)=>({name:r.exam_title?r.exam_title.slice(0,15):`#${i+1}`, score:Math.round(r.percent), passed:r.passed}));
   return (
     <div className="space-y-4">
       <div className="glass rounded-2xl p-5">
@@ -819,6 +956,22 @@ function StudentDashboard({user}){
                 <span className="text-xs text-amber-400 font-medium">{w.percent}%</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+      {chartData.length > 1 && (
+        <div className="glass rounded-2xl p-5">
+          <h4 className="font-semibold text-sm mb-3">Score History</h4>
+          <div className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)"/>
+                <XAxis dataKey="name" tick={{fontSize:10,fill:"#71717a"}} interval={0} angle={-30} textAnchor="end" height={50}/>
+                <YAxis domain={[0,100]} tick={{fontSize:10,fill:"#71717a"}}/>
+                <Tooltip contentStyle={{background:"#18181b",border:"1px solid rgba(255,255,255,0.1)",borderRadius:8,fontSize:12}}/>
+                <Line type="monotone" dataKey="score" stroke="#34d399" strokeWidth={2} dot={{fill:"#34d399",r:4}} activeDot={{r:6}}/>
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         </div>
       )}
@@ -935,6 +1088,7 @@ function ExamPlayer({exam, user, onBack}){
   const [tabViolations,setTabViolations]=useState(0);
   const [tabWarning,setTabWarning]=useState(false);
   const [instructionsStep, setInstructionsStep] = useState("instructions"); // instructions → consent → exam
+  const [examPasswordInput, setExamPasswordInput] = useState("");
   const camera = useCamera(started && exam.camera_required);
   const screen = useScreenShare();
   const socketRef = useRef(null);
@@ -1060,7 +1214,7 @@ function ExamPlayer({exam, user, onBack}){
       if(screen.state!=="granted") return alert("Share your entire screen before starting this exam.");
     }
     try{
-      const data=await api("/api/attempts/start",{method:"POST", body:{examId: exam.id, cameraConsentAt: cameraConsent?Date.now():null}});
+      const data=await api("/api/attempts/start",{method:"POST", body:{examId: exam.id, cameraConsentAt: cameraConsent?Date.now():null, exam_password: examPasswordInput||undefined}});
       setAttempt(data); setEndsAt(data.endsAt); setStarted(true);
     }catch(e){
       camera.stop(); screen.stop();
@@ -1244,9 +1398,15 @@ function ExamPlayer({exam, user, onBack}){
         )}
         {camera.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>{camera.error}</p>}
         {screen.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>Screen: {screen.error}</p>}
+        {exam.exam_password && (
+          <div className="mt-4">
+            <label className="text-xs text-zinc-500 mb-1 block">Exam Password</label>
+            <input type="password" value={examPasswordInput} onChange={e=>setExamPasswordInput(e.target.value)} placeholder="Enter exam password" className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-[var(--a1)]"/>
+          </div>
+        )}
         <div className="mt-6 flex gap-3">
           <button onClick={()=>setInstructionsStep("instructions")} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm">Back</button>
-          <button onClick={startExam} disabled={!proctorReady} className="grad-bg flex-1 rounded-xl py-2.5 font-semibold text-night disabled:opacity-50 disabled:cursor-not-allowed">
+          <button onClick={startExam} disabled={!proctorReady || (exam.exam_password && !examPasswordInput)} className="grad-bg flex-1 rounded-xl py-2.5 font-semibold text-night disabled:opacity-50 disabled:cursor-not-allowed">
             {proctorReady ? "Start exam" : "Complete the steps above"}
           </button>
         </div>
