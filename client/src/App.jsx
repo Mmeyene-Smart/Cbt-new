@@ -396,6 +396,7 @@ function ExamsAdmin({user}){
                       {e.randomize_questions ? <span className="ml-1 text-violet-400">🔀</span> : null}
                       {e.randomize_options ? <span className="ml-1 text-blue-400">🎲</span> : null}
                       {e.negative_marks > 0 && <span className="ml-1 text-amber-400">-{Math.round(e.negative_marks*100)}%</span>}
+                      {e.exam_password && <span className="ml-1 text-rose-400">🔒</span>}
                       {schedLabel && <span className={`ml-1 ${(e.publish_at && now < e.publish_at) ? "text-blue-400" : (e.scheduled_end && now > e.scheduled_end) ? "text-rose-400" : "text-emerald-400"}`}>· {schedLabel}</span>}
                     </p>
                   </div>
@@ -1010,7 +1011,7 @@ function StudentExams({onTake}){
         return (
           <div key={e.id} className="glass rounded-2xl p-5">
             <h3 className="font-semibold">{e.title} {badge}</h3>
-            <p className="text-sm text-zinc-500">{e.subject} · {e.duration_minutes} min · {e.question_count} questions {e.camera_required?<span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-300"><Camera className="h-3 w-3"/> Camera required</span>:null} {e.negative_marks>0 && <span className="ml-2 text-xs text-amber-400">-{Math.round(e.negative_marks*100)}% wrong</span>}</p>
+            <p className="text-sm text-zinc-500">{e.subject} · {e.duration_minutes} min · {e.question_count} questions {e.camera_required?<span className="ml-2 inline-flex items-center gap-1 text-xs text-amber-300"><Camera className="h-3 w-3"/> Camera required</span>:null} {e.negative_marks>0 && <span className="ml-2 text-xs text-amber-400">-{Math.round(e.negative_marks*100)}% wrong</span>} {e.exam_password && <span className="ml-2 inline-flex items-center gap-1 text-xs text-rose-300">🔒 Password required</span>}</p>
             {completed && att && <p className="mt-1 text-xs text-zinc-500">Last score: {att.score}/{att.total} ({Math.round(att.percent)}%)</p>}
             <button onClick={()=>onTake(e)} disabled={scheduled} className="mt-4 grad-bg rounded-xl px-5 py-2 text-sm font-semibold text-night disabled:opacity-50 disabled:cursor-not-allowed">{btnLabel}</button>
           </div>
@@ -1406,9 +1407,10 @@ function ExamPlayer({exam, user, onBack}){
         {camera.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>{camera.error}</p>}
         {screen.error && <p className="mt-2 text-xs text-rose-300 flex items-center gap-1"><AlertTriangle className="h-3 w-3"/>Screen: {screen.error}</p>}
         {exam.exam_password && (
-          <div className="mt-4">
-            <label className="text-xs text-zinc-500 mb-1 block">Exam Password</label>
-            <input type="password" value={examPasswordInput} onChange={e=>setExamPasswordInput(e.target.value)} placeholder="Enter exam password" className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-[var(--a1)]"/>
+          <div className="mt-4 rounded-xl border border-rose-500/30 bg-rose-500/5 p-4">
+            <p className="text-xs text-rose-300 font-medium mb-2">🔒 This exam requires a password</p>
+            <p className="text-xs text-zinc-500 mb-3">Enter the exam password provided by your examiner to start this exam.</p>
+            <input type="password" value={examPasswordInput} onChange={e=>setExamPasswordInput(e.target.value)} placeholder="Enter exam password" className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm outline-none focus:border-rose-500/50"/>
           </div>
         )}
         <div className="mt-6 flex gap-3">

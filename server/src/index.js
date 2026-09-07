@@ -226,7 +226,7 @@ app.get("/api/exams", requireAuth, (req, res) => {
       // scheduled_end: hide exam after it has ended
       if (e.scheduled_end && e.scheduled_end < now) return false;
       return true;
-    }));
+    }).map(e => ({ ...e, exam_password: e.exam_password ? "__SET__" : null })));
   }
   // admin roles: subject scoping
   const adminSubs = req.user.admin_subjects || [];
@@ -318,8 +318,10 @@ app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", 
 app.get("/api/exams/:id", requireAuth, (req, res) => {
   const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(req.params.id));
   if (!exam) return res.status(404).json({ error: "Exam not found" });
-  const questions = db.prepare("SELECT id, exam_id, type, prompt, options, answer, marks, difficulty, topic, explanation, order_index FROM questions WHERE exam_id=? ORDER BY order_index").all(exam.id);
+  // Don't send actual password to students — only whether one exists
   const isStudent = req.user.role === "student";
+  const examData = isStudent ? { ...exam, exam_password: exam.exam_password ? "__SET__" : null } : exam;
+  const questions = db.prepare("SELECT id, exam_id, type, prompt, options, answer, marks, difficulty, topic, explanation, order_index FROM questions WHERE exam_id=? ORDER BY order_index").all(exam.id);
   // Get option seed from student's in-progress attempt
   let optionSeed = null;
   if (isStudent) {
@@ -344,7 +346,7 @@ app.get("/api/exams/:id", requireAuth, (req, res) => {
   if (isStudent && exam.randomize_questions) {
     sanitized = seededShuffle(sanitized, Number(optionSeed || Date.now()));
   }
-  res.json({ exam, questions: sanitized });
+  res.json({ exam: examData, questions: sanitized });
 });
 
 app.post("/api/exams/:id/questions", requireAuth, requireRole("super_admin", "subject_admin", "examiner"), (req, res) => {
