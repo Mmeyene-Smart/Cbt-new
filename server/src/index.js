@@ -211,14 +211,22 @@ app.get("/api/exams/template.xlsx", requireAuth, requireRole("super_admin", "sub
 });
 
 app.get("/api/exams", requireAuth, (req, res) => {
+  const now = Date.now();
   const rows = db.prepare("SELECT e.*, (SELECT COUNT(*) FROM questions q WHERE q.exam_id=e.id) AS question_count FROM exams e ORDER BY e.id DESC").all();
   if (req.user.role === "super_admin") return res.json(rows);
-  // students: only show exams for subjects they're registered for
+  // students: only show exams for subjects they're registered for AND that are published
   if (req.user.role === "student") {
     let studentSubjects = [];
     try { studentSubjects = req.user.subjects || []; } catch { studentSubjects = []; }
-    if (!studentSubjects.length) return res.json([]); // no subjects = no exams
-    return res.json(rows.filter(e => studentSubjects.includes(e.subject)));
+    if (!studentSubjects.length) return res.json([]);
+    return res.json(rows.filter(e => {
+      if (!studentSubjects.includes(e.subject)) return false;
+      // publish_at: hide exam until this time arrives
+      if (e.publish_at && e.publish_at > now) return false;
+      // scheduled_end: hide exam after it has ended
+      if (e.scheduled_end && e.scheduled_end < now) return false;
+      return true;
+    }));
   }
   // admin roles: subject scoping
   const adminSubs = req.user.admin_subjects || [];
@@ -298,10 +306,11 @@ app.post("/api/exams", requireAuth, requireRole("super_admin", "subject_admin", 
   const randomizeOptions = req.body?.randomize_options ? 1 : 0;
   const negativeMarks = Math.max(0, Math.min(1, Number(req.body?.negative_marks) || 0));
   const examPassword = req.body?.exam_password ? sanitize(req.body.exam_password).slice(0, 50) : null;
+  const publishAt = req.body?.publish_at ? Number(req.body.publish_at) : null;
   if (!title || title.length < 3 || title.length > 120) return res.status(400).json({ error: "Title must be 3-120 characters" });
   if (/[<>]/.test(title) || /[<>]/.test(subject)) return res.status(400).json({ error: "Invalid characters in title/subject" });
   const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
-  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, randomize_options, exam_password, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, req.user.id, negativeMarks, scheduledStart, scheduledEnd, randomizeQuestions, randomizeOptions, examPassword, Date.now());
+  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, randomize_options, exam_password, publish_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(slug, title, subject, duration, passPercent, "published", cameraRequired, req.user.username, req.user.id, negativeMarks, scheduledStart, scheduledEnd, randomizeQuestions, randomizeOptions, examPassword, publishAt, Date.now());
   const exam = db.prepare("SELECT * FROM exams WHERE id=?").get(Number(info.lastInsertRowid));
   res.json(exam);
 });
@@ -738,7 +747,7 @@ app.post("/api/exams/:id/clone", requireAuth, requireRole("super_admin", "subjec
   const suffix = req.body?.suffix || " (Copy)";
   const newTitle = srcExam.title + suffix;
   const slug = newTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "-" + Date.now().toString(36);
-  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, created_at) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, NULL, NULL, ?, ?)").run(slug, newTitle, srcExam.subject, srcExam.duration_minutes, srcExam.pass_percent, srcExam.camera_required, req.user.username, req.user.id, srcExam.negative_marks || 0, srcExam.randomize_questions, Date.now());
+  const info = db.prepare("INSERT INTO exams (slug, title, subject, duration_minutes, pass_percent, status, camera_required, created_by, created_by_id, negative_marks, scheduled_start, scheduled_end, randomize_questions, randomize_options, exam_password, publish_at, created_at) VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)").run(slug, newTitle, srcExam.subject, srcExam.duration_minutes, srcExam.pass_percent, srcExam.camera_required, req.user.username, req.user.id, srcExam.negative_marks || 0, srcExam.randomize_questions, srcExam.randomize_options || 0, srcExam.exam_password || null, null, Date.now());
   const newExamId = Number(info.lastInsertRowid);
   const questions = db.prepare("SELECT * FROM questions WHERE exam_id=? ORDER BY order_index").all(srcExam.id);
   const qIns = db.prepare("INSERT INTO questions (exam_id, type, prompt, options, answer, marks, difficulty, topic, explanation, order_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -900,9 +909,16 @@ app.get("/api/results", requireAuth, (req, res) => {
 
 app.get("/api/student/dashboard", requireAuth, (req, res) => {
   if (req.user.role !== "student") return res.status(403).json({ error: "Students only" });
+  const now = Date.now();
   const studentSubjects = req.user.subjects || [];
-  const exams = db.prepare("SELECT id, title, subject, duration_minutes, pass_percent, status, scheduled_start, scheduled_end, negative_marks, (SELECT COUNT(*) FROM questions q WHERE q.exam_id = exams.id) AS question_count FROM exams ORDER BY id DESC").all();
-  const myExams = exams.filter(e => studentSubjects.includes(e.subject));
+  const exams = db.prepare("SELECT id, title, subject, duration_minutes, pass_percent, status, scheduled_start, scheduled_end, publish_at, negative_marks, (SELECT COUNT(*) FROM questions q WHERE q.exam_id = exams.id) AS question_count FROM exams ORDER BY id DESC").all();
+  // Only count exams that are published (publish_at has passed) and not ended
+  const myExams = exams.filter(e => {
+    if (!studentSubjects.includes(e.subject)) return false;
+    if (e.publish_at && e.publish_at > now) return false;
+    if (e.scheduled_end && e.scheduled_end < now) return false;
+    return true;
+  });
   const attempts = db.prepare("SELECT exam_id, score, total, percent, passed, submitted_at, status FROM attempts WHERE user_id = ? ORDER BY submitted_at DESC").all(req.user.id);
   const examMap = {};
   myExams.forEach(e => { examMap[e.id] = e; });

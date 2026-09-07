@@ -281,6 +281,7 @@ function ExamsAdmin({user}){
   const [schedStart,setSchedStart]=useState(""); const [schedEnd,setSchedEnd]=useState(""); const [randomize,setRandomize]=useState(false); const [randomizeOptions,setRandomizeOptions]=useState(false);
   const [negativeMarks,setNegativeMarks]=useState(0);
   const [examPassword,setExamPassword]=useState("");
+  const [publishAt,setPublishAt]=useState("");
   const [selected,setSelected]=useState(null); const [qs,setQs]=useState([]);
   const [qPrompt,setQPrompt]=useState(""); const [qOptions,setQOptions]=useState("A,B,C,D"); const [qAnswer,setQAnswer]=useState("A"); const [qType,setQType]=useState("mcq");
   const [qDifficulty,setQDifficulty]=useState(""); const [qTopic,setQTopic]=useState(""); const [qExplanation,setQExplanation]=useState("");
@@ -288,11 +289,11 @@ function ExamsAdmin({user}){
   useEffect(()=>{load();},[load]);
   const create=async(e)=>{
     e.preventDefault();
-    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize, randomize_options: randomizeOptions, negative_marks: Number(negativeMarks), exam_password: examPassword||undefined};
+    const body={title, subject, duration_minutes:Number(duration), randomize_questions: randomize, randomize_options: randomizeOptions, negative_marks: Number(negativeMarks), exam_password: examPassword||undefined, publish_at: publishAt ? new Date(publishAt).getTime() : undefined};
     if(schedStart) body.scheduled_start = new Date(schedStart).getTime();
     if(schedEnd) body.scheduled_end = new Date(schedEnd).getTime();
     await api("/api/exams",{method:"POST", body});
-    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); setRandomizeOptions(false); setNegativeMarks(0); setExamPassword(""); load();
+    setTitle(""); setSchedStart(""); setSchedEnd(""); setRandomize(false); setRandomizeOptions(false); setNegativeMarks(0); setExamPassword(""); setPublishAt(""); load();
   };
   const cloneExam=async(id)=>{
     if(!confirm("Clone this exam with all its questions?")) return;
@@ -364,6 +365,10 @@ function ExamsAdmin({user}){
             </div>
           </div>
           <input value={examPassword} onChange={e=>setExamPassword(e.target.value)} placeholder="Exam password (optional)" className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          <div>
+            <label className="text-xs text-zinc-500 mb-1 block">Publish to students at (optional — exam hidden until this time)</label>
+            <input type="datetime-local" value={publishAt} onChange={e=>setPublishAt(e.target.value)} className="w-full rounded-xl border border-white/10 bg-night/60 px-3 py-2 text-sm outline-none"/>
+          </div>
           <button className="grad-bg w-full rounded-xl py-2 font-semibold text-night">Create</button>
         </form>
         <div className="glass rounded-2xl p-4">
@@ -378,9 +383,11 @@ function ExamsAdmin({user}){
             {exams.map(e=>{
               const now = Date.now();
               let schedLabel = "";
-              if(e.scheduled_start && now < e.scheduled_start) schedLabel = `Starts ${new Date(e.scheduled_start).toLocaleDateString()}`;
+              if(e.publish_at && now < e.publish_at) schedLabel = `Hidden until ${new Date(e.publish_at).toLocaleDateString()}`;
+              else if(e.scheduled_start && now < e.scheduled_start) schedLabel = `Starts ${new Date(e.scheduled_start).toLocaleDateString()}`;
               else if(e.scheduled_end && now > e.scheduled_end) schedLabel = "Ended";
               else if(e.scheduled_start || e.scheduled_end) schedLabel = "Available";
+              else schedLabel = "Published";
               return (
                 <li key={e.id} className={`flex items-center justify-between rounded-xl px-3 py-2 ${selected?.id===e.id?"bg-white/10":"hover:bg-white/5"}`}>
                   <div className="flex-1 min-w-0">
@@ -389,7 +396,7 @@ function ExamsAdmin({user}){
                       {e.randomize_questions ? <span className="ml-1 text-violet-400">🔀</span> : null}
                       {e.randomize_options ? <span className="ml-1 text-blue-400">🎲</span> : null}
                       {e.negative_marks > 0 && <span className="ml-1 text-amber-400">-{Math.round(e.negative_marks*100)}%</span>}
-                      {schedLabel && <span className={`ml-1 ${e.scheduled_end && now > e.scheduled_end ? "text-rose-400" : "text-emerald-400"}`}>· {schedLabel}</span>}
+                      {schedLabel && <span className={`ml-1 ${(e.publish_at && now < e.publish_at) ? "text-blue-400" : (e.scheduled_end && now > e.scheduled_end) ? "text-rose-400" : "text-emerald-400"}`}>· {schedLabel}</span>}
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
